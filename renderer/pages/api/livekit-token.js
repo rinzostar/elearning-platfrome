@@ -6,9 +6,8 @@ export default async function handler(req, res) {
     const { roomName, identity, name, isHost } = req.body || {};
     if (!roomName || !identity) return res.status(400).json({ error: 'Missing fields' });
 
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
-    if (!apiKey || !apiSecret) return res.status(500).json({ error: 'LiveKit env missing' });
+    const apiKey = "APIVVDbGVMUAfMJ";
+    const apiSecret = "GWsoRdfjwIU6wE0aq0M0ZzxK02Fhm5okymK6yaPA1UL";
 
     const at = new AccessToken(apiKey, apiSecret, { identity, name });
     at.addGrant({

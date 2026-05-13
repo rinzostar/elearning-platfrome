@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol } = require('electron');
+const { app, BrowserWindow, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -41,25 +41,12 @@ console.log('[Env] MISTRAL_KEY is hardcoded in api.js');
 
 const { setupApiHandlers } = require('./api');
 
-// Register custom protocol to handle Next.js absolute paths
-function registerAppProtocol() {
-  protocol.registerFileProtocol('app', (request, callback) => {
-    let url = request.url.substr(6); // Strip 'app://'
-    // Ensure we handle absolute paths by rooting them in renderer/out
-    let filePath = path.join(__dirname, '..', 'renderer', 'out', url);
-    
-    // If it's a directory or doesn't have an extension, try adding .html
-    if (!path.extname(filePath)) {
-      if (fs.existsSync(filePath + '.html')) {
-        filePath += '.html';
-      } else if (fs.existsSync(path.join(filePath, 'index.html'))) {
-        filePath = path.join(filePath, 'index.html');
-      }
-    }
-    
-    callback({ path: filePath });
-  });
-}
+const OUT_DIR = path.join(__dirname, '..', 'renderer', 'out');
+
+// Register privileged scheme before app is ready
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }
+]);
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -71,7 +58,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
     titleBarStyle: 'hiddenInset',
-    show: false, // Don't show until ready to prevent white flicker
+    show: false,
   });
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -80,8 +67,8 @@ function createWindow() {
     win.loadURL('http://localhost:3000');
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // In production, use our custom app protocol
-    win.loadURL('app://./index.html');
+    win.loadURL('app:///index.html');
+    win.webContents.openDevTools({ mode: 'detach' });
   }
 
   win.once('ready-to-show', () => {
@@ -89,13 +76,21 @@ function createWindow() {
   });
 }
 
-// Important: Standard scheme must be registered before app is ready
-protocol.registerSchemesAsPrivileged([
-  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }
-]);
-
 app.whenReady().then(() => {
-  registerAppProtocol();
+  protocol.handle('app', (request) => {
+    const url = new URL(request.url);
+    let filePath = path.join(OUT_DIR, url.pathname);
+    if (!path.extname(filePath)) {
+      const withHtml = filePath + '.html';
+      const withIndex = path.join(filePath, 'index.html');
+      if (fs.existsSync(withHtml)) {
+        filePath = withHtml;
+      } else if (fs.existsSync(withIndex)) {
+        filePath = withIndex;
+      }
+    }
+    return net.fetch('file:///' + filePath.replace(/\\/g, '/'));
+  });
   setupApiHandlers();
   createWindow();
   

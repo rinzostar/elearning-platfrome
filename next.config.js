@@ -2,9 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
   images: { unoptimized: true },
-  output: 'export',
-  distDir: 'out',
   trailingSlash: true,
+  output: 'export',
+  outDir: 'out',
 };
 
 module.exports = nextConfig;

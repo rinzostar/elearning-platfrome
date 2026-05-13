@@ -7,7 +7,7 @@ import { listChat, sendChat, endLivestream, getActiveLivestreamForModule, getMod
 import { toast } from '../lib/toast';
 import Avatar from '../components/Avatar';
 
-const LIVEKIT_URL = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+const LIVEKIT_URL = "wss://elearning-platfrom-4ynlqfem.livekit.cloud";
 
 const I = {
   mic: 'M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8',
@@ -49,7 +49,6 @@ export default function Live() {
   const [status, setStatus] = useState('idle'); // idle | connecting | connected | reconnecting | error
   const [errorMsg, setErrorMsg] = useState('');
   const [participants, setParticipants] = useState(0);
-  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
 
   // Devices
   const [devices, setDevices] = useState({ cameras: [], mics: [] });
@@ -218,68 +217,126 @@ export default function Live() {
 
     (async () => {
       try {
+        console.log('[LIVE] Starting connection...', { roomName, isHost, userId: user.id });
         setStatus('connecting');
         setErrorMsg('');
 
         const { Room, RoomEvent, Track, ConnectionState } = await import('livekit-client');
+        console.log('[LIVE] LiveKit imported');
 
         const tokenRes = await fetch('/api/livekit-token', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ roomName, identity: user.id, name: user.name, isHost }),
         });
-        const { token, error } = await tokenRes.json();
+        const tokenData = await tokenRes.json();
+        console.log('[LIVE] Token response:', tokenData.error ? tokenData.error : 'OK');
+        const { token, error } = tokenData;
         if (error) { setStatus('error'); setErrorMsg(error); return; }
 
+        console.log('[LIVE] Creating Room...');
         room = new Room({
           adaptiveStream: true,
           dynacast: true,
           publishDefaults: { simulcast: true, videoSimulcastLayers: undefined },
           videoCaptureDefaults: isHost ? { deviceId: camId || undefined, resolution: { width: 1280, height: 720 } } : undefined,
           audioCaptureDefaults: isHost ? { deviceId: micId || undefined, echoCancellation: true, noiseSuppression: true } : undefined,
+          autoSubscribe: true,
         });
         roomRef.current = room;
+        console.log('[LIVE] Room created:', room.name);
 
-        const updateCount = () => setParticipants(room.remoteParticipants.size + 1);
+const updateCount = () => {
+          console.log('[LIVE] Participants changed:', room.remoteParticipants.size + 1);
+          setParticipants(room.remoteParticipants.size + 1);
+        };
 
         room
-          .on(RoomEvent.ParticipantConnected, updateCount)
-          .on(RoomEvent.ParticipantDisconnected, updateCount)
-          .on(RoomEvent.TrackSubscribed, (track) => {
+          .on(RoomEvent.ParticipantConnected, (p) => {
+            console.log('[LIVE] Participant connected:', p.identity, p.name);
+            updateCount();
+          })
+          .on(RoomEvent.ParticipantDisconnected, (p) => {
+            console.log('[LIVE] Participant disconnected:', p.identity);
+            updateCount();
+          })
+          .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+            console.log('[LIVE] TrackSubscribed:', track.kind, 'from:', participant?.identity, 'track:', track.sid, 'subscribed:', publication?.isSubscribed);
             if (track.kind === Track.Kind.Video && videoRef.current) {
+              console.log('[LIVE] Attaching video track to element');
               track.attach(videoRef.current);
-              setHasRemoteVideo(true);
             } else if (track.kind === Track.Kind.Audio) {
+              console.log('[LIVE] Attaching audio track');
               const el = track.attach();
               el.autoplay = true;
               audioContainerRef.current?.appendChild(el);
             }
           })
-          .on(RoomEvent.TrackUnsubscribed, (track) => {
+          .on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+            console.log('[LIVE] TrackUnsubscribed:', track.kind, 'from:', participant?.identity);
             track.detach().forEach(el => el.remove());
-            if (track.kind === Track.Kind.Video) setHasRemoteVideo(false);
+          })
+          .on(RoomEvent.TrackSubscriptionChanged, (publication, subscription, participant) => {
+            console.log('[LIVE] TrackSubscriptionChanged:', publication?.trackName, 'subscribed:', subscription);
+            if (subscription && publication?.track?.kind === Track.Kind.Video && videoRef.current) {
+              publication.track.attach(videoRef.current);
+            }
           })
           .on(RoomEvent.LocalTrackPublished, (pub) => {
+            console.log('[LIVE] LocalTrackPublished:', pub.kind, pub.trackName);
             if (isHost && pub.kind === Track.Kind.Video && videoRef.current) {
               pub.track?.attach(videoRef.current);
             }
           })
-          .on(RoomEvent.Reconnecting, () => setStatus('reconnecting'))
-          .on(RoomEvent.Reconnected, () => setStatus('connected'))
+          .on(RoomEvent.Reconnecting, () => { console.log('[LIVE] Reconnecting...'); setStatus('reconnecting'); })
+          .on(RoomEvent.Reconnected, () => { console.log('[LIVE] Reconnected'); setStatus('connected'); })
           .on(RoomEvent.ConnectionStateChanged, (s) => {
+            console.log('[LIVE] ConnectionStateChanged:', s);
             if (s === ConnectionState.Connected) setStatus('connected');
             else if (s === ConnectionState.Connecting) setStatus('connecting');
             else if (s === ConnectionState.Reconnecting) setStatus('reconnecting');
             else if (s === ConnectionState.Disconnected) setStatus('idle');
           })
           .on(RoomEvent.Disconnected, (reason) => {
+            console.log('[LIVE] Disconnected:', reason);
             setStatus('idle');
             if (reason && !cancelled) toast.info('Disconnected from live');
           });
 
+        console.log('[LIVE] Connecting to:', LIVEKIT_URL, 'room:', roomName);
         await room.connect(LIVEKIT_URL, token);
+        console.log('[LIVE] Connected! Local participant:', room.localParticipant.identity);
         if (cancelled) { await room.disconnect(); return; }
         setStatus('connected');
-        updateCount();
+
+        // Poll for remote participants and try to get their tracks
+        const checkInterval = setInterval(() => {
+          if (cancelled) { clearInterval(checkInterval); return; }
+          
+          const participantCount = room.remoteParticipants.size;
+          console.log('[LIVE] Poll check - participants:', participantCount);
+          
+          if (participantCount > 0) {
+            for (const [, p] of room.remoteParticipants) {
+              console.log('[LIVE] Poll - participant:', p.identity);
+              console.log('[LIVE] Poll - video pubs:', p.videoTrackPublications.size);
+              
+              // Try subscribing to all tracks
+              p.subscribeToTracks().catch(() => {});
+              
+              for (const pub of p.videoTrackPublications.values()) {
+                console.log('[LIVE] Poll - video pub:', pub.trackName, 'subscribed:', pub.isSubscribed, 'track:', pub.track?.sid);
+                if (pub.track && pub.isSubscribed && pub.track.kind === Track.Kind.Video) {
+                  console.log('[LIVE] Poll - attaching video!');
+                  pub.track.attach(videoRef.current);
+                }
+              }
+            }
+            clearInterval(checkInterval);
+          }
+        }, 1000);
+        
+        // Stop polling after 10 seconds
+        setTimeout(() => clearInterval(checkInterval), 10000);
 
         if (isHost) {
           await room.localParticipant.setCameraEnabled(camOn, { deviceId: camId || undefined });
@@ -479,9 +536,7 @@ export default function Live() {
             </div>
           )}
 
-          {isLive && !LIVEKIT_URL && (
-            <div className="live-placeholder">📹 Set NEXT_PUBLIC_LIVEKIT_URL to enable video</div>
-          )}
+          
 
           {isLive && LIVEKIT_URL && status === 'error' && (
             <div className="live-placeholder">
@@ -493,10 +548,6 @@ export default function Live() {
 
           {isLive && LIVEKIT_URL && (status === 'connecting' || status === 'reconnecting') && (
             <div className="live-placeholder"><div className="spinner" />{statusLabel}</div>
-          )}
-
-          {isLive && LIVEKIT_URL && status === 'connected' && !isHost && !hasRemoteVideo && (
-            <div className="live-placeholder">Waiting for the host's video…</div>
           )}
 
           {isLive && LIVEKIT_URL && status === 'connected' && isHost && !camOn && (
@@ -513,7 +564,7 @@ export default function Live() {
             muted={isHost}
             className={`live-video ${isHost ? 'mirror' : ''}`}
             style={{
-              display: (isHost || (isLive && status === 'connected' && hasRemoteVideo)) ? 'block' : 'none',
+              display: (isLive && status === 'connected') ? 'block' : 'none',
               borderRadius: 'var(--radius)',
             }}
           />
