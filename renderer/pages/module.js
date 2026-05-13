@@ -64,13 +64,10 @@ export default function Module() {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState('');
-  const [geminiKeyInput, setGeminiKeyInput] = useState('');
-  const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [chatText, setChatText] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState('');
   const [chatMessages, setChatMessages] = useState([]);
-  const [chatModel, setChatModel] = useState('google'); // 'google' or 'openrouter'
   const playerRef = useRef(null);
 
   const isOwner = user && mod && user.id === mod.owner_id;
@@ -80,21 +77,28 @@ export default function Module() {
 
   const refresh = async () => {
     if (!id) return;
-    const [m, c, l] = await Promise.all([
-      getModule(id),
-      listCoursesByModule(id),
-      getActiveLivestreamForModule(id),
-    ]);
-    setMod(m.data);
-    setModuleName(m.data?.name || '');
-    setCourses(c.data || []);
-    setLive(l.data);
-    if (c.data?.[0] && !openCourse) setOpenCourse(c.data[0]);
-    if (user) {
-      const { data: f } = await listFavorites(user.id);
-      setFavs(new Set((f || []).map(x => x.id)));
+    try {
+      const [m, c, l] = await Promise.all([
+        getModule(id),
+        listCoursesByModule(id),
+        getActiveLivestreamForModule(id),
+      ]);
+      if (m.data) {
+        setMod(m.data);
+        setModuleName(m.data.name || '');
+      }
+      setCourses(c.data || []);
+      setLive(l.data);
+      if (c.data?.[0] && !openCourse) setOpenCourse(c.data[0]);
+      if (user) {
+        const { data: f } = await listFavorites(user.id);
+        setFavs(new Set((f || []).map(x => x.id)));
+      }
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [id, user?.id]);
 
@@ -118,7 +122,7 @@ export default function Module() {
 
   const onAddCourse = async (e) => {
     e.preventDefault();
-    if (!newCourse.title) return;
+    if (!newCourse.title || !id) return;
     setBusy(true);
     try {
       const { data, error } = await createCourse({
@@ -133,8 +137,12 @@ export default function Module() {
       setNewCourse({ title: '', content: '' });
       toast.success('Course added');
       await refresh();
-    } catch (err) { toast.error(err.message); }
-    setBusy(false);
+    } catch (err) { 
+      console.error('Add course failed:', err);
+      toast.error(err.message || 'Failed to add course'); 
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onGenerateCourse = async () => {
@@ -145,7 +153,6 @@ export default function Module() {
       const course = await generateCourseDraft({
         moduleName: mod?.name,
         request: aiPrompt.trim(),
-        provider: chatModel,
       });
       setNewCourse({
         title: course.title || '',
@@ -154,29 +161,9 @@ export default function Module() {
       toast.success('Course draft generated');
     } catch (err) {
       setAiError(err.message);
-      toast.error('AI setup needs attention');
+      toast.error('AI request failed');
     }
     setAiBusy(false);
-  };
-
-  const saveGeminiKey = () => {
-    const key = geminiKeyInput.trim();
-    if (!key) return;
-    localStorage.setItem('gemini_api_key', key);
-    setGeminiKeyInput('');
-    setAiError('');
-    setChatError('');
-    toast.success('Gemini key saved');
-  };
-
-  const saveOpenRouterKey = () => {
-    const key = openRouterKeyInput.trim();
-    if (!key) return;
-    localStorage.setItem('openrouter_api_key', key);
-    setOpenRouterKeyInput('');
-    setAiError('');
-    setChatError('');
-    toast.success('OpenRouter key saved');
   };
 
   const onUpdateModule = async (e) => {
@@ -278,13 +265,12 @@ export default function Module() {
           content: openCourse.content || '',
           yt_url: openCourse.yt_url || firstYoutubeLink(openCourse.content) || '',
         },
-        provider: chatModel,
       });
 
       setChatMessages(prev => [...prev, { role: 'assistant', text: answer }]);
     } catch (err) {
       setChatError(err.message);
-      toast.error('AI setup needs attention');
+      toast.error('AI request failed');
     }
     setChatBusy(false);
   };
@@ -365,17 +351,19 @@ export default function Module() {
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 28 }}>
-        <div>
-          <div className="row between" style={{ marginBottom: 12 }}>
-            <h2>Courses</h2>
-            {canManage && !showAdd && (
-              <button className="btn sm" onClick={() => setShowAdd(true)}>Add course</button>
-            )}
-          </div>
+      <div className={openCourse ? 'theater-mode' : ''}>
+        <div className={openCourse ? 'main-theater' : ''}>
+          {!openCourse && (
+            <div className="row between" style={{ marginBottom: 12 }}>
+              <h2>Courses</h2>
+              {canManage && !showAdd && (
+                <button className="btn sm" onClick={() => setShowAdd(true)}>Add course</button>
+              )}
+            </div>
+          )}
 
           {showAdd && (
-            <form className="card" onSubmit={onAddCourse} style={{ marginBottom: 20, border: '1px solid var(--ink)' }}>
+            <form className="card glass" onSubmit={onAddCourse} style={{ marginBottom: 20, border: '1px solid var(--ink)' }}>
               <div className="row between" style={{ marginBottom: 12 }}>
                 <h3 style={{ margin: 0 }}>New Course</h3>
                 <button type="button" className="btn ghost sm" onClick={() => setShowAdd(false)}>Cancel</button>
@@ -394,27 +382,7 @@ export default function Module() {
                 />
               </div>
               <div className="field">
-                <div className="row between">
-                  <label>AI course generator</label>
-                  <div className="row" style={{ gap: 6 }}>
-                    <button 
-                      type="button"
-                      className={`btn ghost xs ${chatModel === 'google' ? 'active' : ''}`}
-                      onClick={() => setChatModel('google')}
-                      style={{ padding: '2px 6px', fontSize: 10, background: chatModel === 'google' ? 'var(--ink)' : 'transparent', color: chatModel === 'google' ? 'white' : 'inherit' }}
-                    >
-                      Google
-                    </button>
-                    <button 
-                      type="button"
-                      className={`btn ghost xs ${chatModel === 'openrouter' ? 'active' : ''}`}
-                      onClick={() => setChatModel('openrouter')}
-                      style={{ padding: '2px 6px', fontSize: 10, background: chatModel === 'openrouter' ? 'var(--ink)' : 'transparent', color: chatModel === 'openrouter' ? 'white' : 'inherit' }}
-                    >
-                      Gemma
-                    </button>
-                  </div>
-                </div>
+                <label>AI course generator</label>
                 <textarea
                   className="textarea"
                   placeholder="Example: Create a beginner lesson about matrix multiplication with examples and exercises."
@@ -426,29 +394,7 @@ export default function Module() {
                 </button>
                 {aiError && (
                   <div className="form-error">
-                    <div>{aiError}</div>
-                    <div className="row" style={{ marginTop: 8, gap: 6 }}>
-                      <input
-                        className="input"
-                        placeholder="Gemini API Key"
-                        value={geminiKeyInput}
-                        onChange={e => setGeminiKeyInput(e.target.value)}
-                      />
-                      <button type="button" className="btn sm" onClick={saveGeminiKey} disabled={!geminiKeyInput.trim()}>
-                        Save
-                      </button>
-                    </div>
-                    <div className="row" style={{ marginTop: 8, gap: 6 }}>
-                      <input
-                        className="input"
-                        placeholder="OpenRouter API Key (fallback)"
-                        value={openRouterKeyInput}
-                        onChange={e => setOpenRouterKeyInput(e.target.value)}
-                      />
-                      <button type="button" className="btn sm" onClick={saveOpenRouterKey} disabled={!openRouterKeyInput.trim()}>
-                        Save
-                      </button>
-                    </div>
+                    {aiError}
                   </div>
                 )}
               </div>
@@ -458,9 +404,11 @@ export default function Module() {
             </form>
           )}
 
-          {courses.length === 0 ? (
+          {!openCourse && courses.length === 0 && (
             <div className="empty">No courses uploaded yet.</div>
-          ) : courses.map(c => (
+          )}
+          
+          {!openCourse && courses.map(c => (
             <div key={c.id}>
               {editing?.id === c.id ? (
                 <form className="card" onSubmit={onUpdateCourse} style={{ marginBottom: 12, padding: 12 }}>
@@ -514,149 +462,125 @@ export default function Module() {
           ))}
 
           {openCourse && (
-            <>
-              <div className="divider" />
-              <div ref={playerRef}>
-                <div className="row between" style={{ marginBottom: 12 }}>
-                  <h2 style={{ margin: 0 }}>{openCourse.title}</h2>
-                </div>
+            <div className="active-view" style={{ animation: 'fade-up 0.4s var(--ease)' }}>
+              <div ref={playerRef} className="video-hero">
                 {embed ? (
                   <iframe
                     src={embed}
-                    style={{ width: '100%', aspectRatio: '16/9', border: 0, borderRadius: 'var(--radius)' }}
+                    style={{ width: '100%', aspectRatio: '16/9', border: 0, display: 'block' }}
                     allow="accelerometer; autoplay; encrypted-media; picture-in-picture"
                     allowFullScreen
                   />
                 ) : (
                   <div style={{
-                    aspectRatio: '16 / 9', background: '#0a0a0a',
-                    borderRadius: 'var(--radius)', display: 'grid', placeItems: 'center',
+                    aspectRatio: '16 / 9', background: 'radial-gradient(circle at center, #1a1a1a, #0a0a0a)',
+                    display: 'grid', placeItems: 'center',
                     color: '#525252', fontSize: 13,
                   }}>
-                    No video — see attachments
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.5 }}>📄</div>
+                      <div>No video — read content below</div>
+                    </div>
                   </div>
                 )}
+              </div>
+
+              <div className="course-body-wrap" style={{ marginTop: 24 }}>
+                <div className="row between" style={{ marginBottom: 16 }}>
+                  <h2 style={{ fontSize: 24 }}>{openCourse.title}</h2>
+                  <div className="row">
+                    {canManage && (
+                      <button className="btn ghost sm" onClick={() => setEditing(openCourse)}>Edit Lesson</button>
+                    )}
+                    <button className={`fav ${favs.has(openCourse.id) ? 'on' : ''}`} onClick={() => star(openCourse.id)}>
+                      {favs.has(openCourse.id) ? '★' : '☆'}
+                    </button>
+                  </div>
+                </div>
+                
                 {openCourse.content && (
-                  <div className="course-content">
+                  <div className="course-content card" style={{ border: 'none', background: 'var(--surface)', fontSize: 15 }}>
                     {openCourse.content}
                   </div>
                 )}
+
                 {attach.length > 0 && (
-                  <div className="inline-files">
-                    {attach.map(a => <AttachmentPreview key={a.id} attachment={a} />)}
+                  <div style={{ marginTop: 24 }}>
+                    <h3 style={{ marginBottom: 12 }}>Attachments</h3>
+                    <div className="inline-files">
+                      {attach.map(a => <AttachmentPreview key={a.id} attachment={a} />)}
+                    </div>
                   </div>
                 )}
               </div>
-            </>
+            </div>
           )}
         </div>
 
-        <div>
-          <div className="card" style={{ marginBottom: 14 }}>
-            <div className="row between" style={{ marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>
-                Files
-                {openCourse && <span style={{ fontWeight: 400, color: 'var(--ink-3)', fontSize: 12, marginLeft: 6 }}>· {openCourse.title}</span>}
+        {openCourse ? (
+          <div className="lesson-sidebar">
+            <div className="card glass" style={{ padding: 14 }}>
+              <h3 style={{ marginBottom: 12, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ink-4)' }}>
+                Lessons ({courses.length})
               </h3>
-              {canManage && openCourse && (
-                <label className="btn ghost sm" style={{ cursor: 'pointer' }}>
-                  Add
-                  <input type="file" hidden onChange={e => onFileUpload(e, openCourse.id)} />
-                </label>
+              <div className="lesson-list">
+                {courses.map((c, i) => (
+                  <div
+                    key={c.id}
+                    className={`lesson-item ${openCourse.id === c.id ? 'active' : ''}`}
+                    onClick={() => openAndScroll(c)}
+                  >
+                    <div className="num">{(i + 1).toString().padStart(2, '0')}</div>
+                    <div className="title">{c.title}</div>
+                    <div className="ic" style={{ fontSize: 10 }}>{c.yt_url || firstYoutubeLink(c.content) ? '▶' : '📄'}</div>
+                  </div>
+                ))}
+              </div>
+              {canManage && (
+                <button className="btn ghost sm" style={{ width: '100%', marginTop: 12 }} onClick={() => setShowAdd(true)}>
+                  + Add Lesson
+                </button>
               )}
             </div>
-            {attach.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>No files for this course.</div>
-            ) : attach.map(a => (
-              <div key={a.id} className="attach">
-                <div className="name" title={a.file_name}>{a.file_name}</div>
-                <div className="row" style={{ gap: 4 }}>
-                  <a className="btn ghost sm" href={publicUrl('course-files', a.file_path)} target="_blank" rel="noreferrer">
-                    ↓
-                  </a>
-                  {canManage && (
-                    <button className="btn ghost sm" onClick={() => onRemoveAttach(a.id)} style={{ color: 'var(--danger)' }}>×</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
 
-          <div className="card">
-            <h3 style={{ marginBottom: 8 }}>About</h3>
-            <p style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-              {mod.semester_label} · taught by {mod.owner_name || 'Unassigned'}.
-            </p>
-          </div>
-
-          {openCourse && !canManage && (
-            <div className="card course-ai">
-              <div className="row between" style={{ marginBottom: 10 }}>
-                <div className="column">
-                  <h3 style={{ margin: 0 }}>Course assistant</h3>
-                  <div className="row" style={{ gap: 8, marginTop: 4 }}>
-                    <button 
-                      className={`btn ghost xs ${chatModel === 'google' ? 'active' : ''}`}
-                      onClick={() => setChatModel('google')}
-                      style={{ padding: '2px 6px', fontSize: 10, background: chatModel === 'google' ? 'var(--ink)' : 'transparent', color: chatModel === 'google' ? 'white' : 'inherit' }}
-                    >
-                      Google
-                    </button>
-                    <button 
-                      className={`btn ghost xs ${chatModel === 'openrouter' ? 'active' : ''}`}
-                      onClick={() => setChatModel('openrouter')}
-                      style={{ padding: '2px 6px', fontSize: 10, background: chatModel === 'openrouter' ? 'var(--ink)' : 'transparent', color: chatModel === 'openrouter' ? 'white' : 'inherit' }}
-                    >
-                      Gemma
-                    </button>
-                  </div>
+            <div className="card glass course-ai" style={{ flex: 1, minHeight: 400 }}>
+              <div className="row between" style={{ padding: '14px 16px' }}>
+                <h3 style={{ margin: 0, fontSize: 14 }}>Course Assistant</h3>
+                <div className="row" style={{ gap: 6 }}>
+                  <button className="btn ghost xs" onClick={() => setChatMessages([])} title="Clear chat">↺</button>
+                  <button className="btn ghost xs" onClick={() => askCourse('summary')} disabled={chatBusy}>
+                    Summarize
+                  </button>
                 </div>
-                <button className="btn ghost sm" onClick={() => askCourse('summary')} disabled={chatBusy}>
-                  Summarize
-                </button>
               </div>
               <div className="course-ai-body">
                 {chatMessages.length === 0 ? (
-                  <div className="empty" style={{ padding: 16 }}>
-                    {chatError || 'Ask about this course or summarize it.'}
-                    {chatError && (
-                      <div className="column" style={{ marginTop: 10, gap: 6 }}>
-                        <div className="row" style={{ gap: 6 }}>
-                          <input
-                            className="input"
-                            placeholder="Gemini API Key"
-                            value={geminiKeyInput}
-                            onChange={e => setGeminiKeyInput(e.target.value)}
-                          />
-                          <button type="button" className="btn sm" onClick={saveGeminiKey} disabled={!geminiKeyInput.trim()}>
-                            Save
-                          </button>
-                        </div>
-                        <div className="row" style={{ gap: 6 }}>
-                          <input
-                            className="input"
-                            placeholder="OpenRouter API Key (fallback)"
-                            value={openRouterKeyInput}
-                            onChange={e => setOpenRouterKeyInput(e.target.value)}
-                          />
-                          <button type="button" className="btn sm" onClick={saveOpenRouterKey} disabled={!openRouterKeyInput.trim()}>
-                            Save
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  <div className="empty" style={{ background: 'transparent', border: '1px dashed var(--line)', padding: 24 }}>
+                    <div style={{ fontSize: 24, marginBottom: 8 }}>🤖</div>
+                    <div style={{ fontSize: 12 }}>{chatError || 'Ask anything about this lesson!'}</div>
                   </div>
                 ) : chatMessages.map((m, i) => (
                   <div key={i} className={`ai-msg ${m.role}`}>
+                    <div className="role-label">{m.role === 'assistant' ? 'AI' : 'You'}</div>
                     {m.text}
                   </div>
                 ))}
-                {chatBusy && <div className="ai-msg assistant">Thinking...</div>}
+                {chatBusy && (
+                  <div className="ai-msg assistant">
+                    <div className="role-label">AI</div>
+                    <div className="row" style={{ gap: 4 }}>
+                      <div className="dot" style={{ width: 4, height: 4, background: 'var(--ink-4)', borderRadius: '50%', animation: 'pulse 1s infinite' }} />
+                      <div className="dot" style={{ width: 4, height: 4, background: 'var(--ink-4)', borderRadius: '50%', animation: 'pulse 1s infinite 0.2s' }} />
+                      <div className="dot" style={{ width: 4, height: 4, background: 'var(--ink-4)', borderRadius: '50%', animation: 'pulse 1s infinite 0.4s' }} />
+                    </div>
+                  </div>
+                )}
                 {chatError && chatMessages.length > 0 && <div className="form-error">{chatError}</div>}
               </div>
-              <form className="chat-input" onSubmit={(e) => { e.preventDefault(); askCourse('chat'); }}>
+              <form className="chat-input glass" onSubmit={(e) => { e.preventDefault(); askCourse('chat'); }} style={{ border: 'none', borderTop: '1px solid var(--line)' }}>
                 <input
-                  placeholder="Ask about this course..."
+                  className="input glass sm"
+                  placeholder="Ask a question..."
                   value={chatText}
                   onChange={e => setChatText(e.target.value)}
                   disabled={chatBusy}
@@ -664,8 +588,42 @@ export default function Module() {
                 <button className="btn sm" disabled={chatBusy || !chatText.trim()}>Ask</button>
               </form>
             </div>
-          )}
-        </div>
+
+            <div className="card glass">
+              <h3 style={{ marginBottom: 8, fontSize: 14 }}>Resources</h3>
+              {attach.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>No files attached.</div>
+              ) : attach.map(a => (
+                <div key={a.id} className="attach" style={{ background: 'transparent', padding: '8px 10px' }}>
+                  <div className="name" style={{ fontSize: 12 }}>{a.file_name}</div>
+                  <a href={publicUrl('course-files', a.file_path)} target="_blank" rel="noreferrer" className="btn ghost xs">↓</a>
+                </div>
+              ))}
+              {canManage && (
+                <label className="btn ghost sm" style={{ width: '100%', marginTop: 10, cursor: 'pointer' }}>
+                  Upload File
+                  <input type="file" hidden onChange={e => onFileUpload(e, openCourse.id)} />
+                </label>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="row between" style={{ marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Files</h3>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>Select a course to view its files.</div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginBottom: 8 }}>About</h3>
+              <p style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                {mod.semester_label} · taught by {mod.owner_name || 'Unassigned'}.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );

@@ -24,9 +24,14 @@ export default function MyModules() {
       setLoading(false);
       return;
     }
-    const { data } = await listMyModules(user.id);
-    setMods(data || []);
-    setLoading(false);
+    try {
+      const { data } = await listMyModules(user.id);
+      setMods(data || []);
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [user?.id, canTeach]);
 
@@ -48,8 +53,12 @@ export default function MyModules() {
       setAdder(null);
       await refresh();
       toast.success('Course added');
-    } catch (err) { toast.error(err.message); }
-    setBusy(null);
+    } catch (err) { 
+      console.error('Add youtube failed:', err);
+      toast.error(err.message); 
+    } finally {
+      setBusy(null);
+    }
   };
 
   const onFile = async (e, mid) => {
@@ -70,8 +79,12 @@ export default function MyModules() {
       }
       toast.success(`Uploaded ${f.name}`);
       await refresh();
-    } catch (err) { toast.error(err.message); }
-    setBusy(null);
+    } catch (err) { 
+      console.error('File upload failed:', err);
+      toast.error(err.message); 
+    } finally {
+      setBusy(null);
+    }
     e.target.value = '';
   };
 

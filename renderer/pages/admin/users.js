@@ -27,8 +27,8 @@ export default function AdminUsers() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
         });
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'Failed');
+        const j = await r.json().catch(() => ({ error: 'Response parse failed' }));
+        if (!j.ok) throw new Error(j.error || 'Failed to create user');
         toast.success(`Created. Password: ${j.password}`, { duration: 6000 });
       } else {
         users.unshift({
@@ -42,8 +42,12 @@ export default function AdminUsers() {
       setForm({ full_name: '', email: '', role: 'student', dob: '' });
       await refresh();
       setOpen(false);
-    } catch (err) { toast.error(err.message); }
-    setBusy(false);
+    } catch (err) { 
+      console.error('Create user failed:', err);
+      toast.error(err.message); 
+    } finally {
+      setBusy(false);
+    }
   };
 
   const toggleBan = async (u) => {

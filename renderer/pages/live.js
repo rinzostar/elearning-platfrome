@@ -514,6 +514,7 @@ export default function Live() {
             className={`live-video ${isHost ? 'mirror' : ''}`}
             style={{
               display: (isHost || (isLive && status === 'connected' && hasRemoteVideo)) ? 'block' : 'none',
+              borderRadius: 'var(--radius)',
             }}
           />
           <div ref={audioContainerRef} style={{ display: 'none' }} />
@@ -566,29 +567,31 @@ export default function Live() {
           )}
         </div>
 
-        <div className="chat">
-          <div className="chat-head row between">
-            <span>Live chat</span>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 400 }}>{messages.length} messages</span>
+        <div className="chat glass card" style={{ padding: 0 }}>
+          <div className="chat-head row between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
+            <span style={{ fontWeight: 600 }}>Live Chat</span>
+            <span className="pill sm" style={{ fontSize: 10 }}>{messages.length}</span>
           </div>
-          <div className="chat-body" ref={bodyRef}>
+          <div className="chat-body" ref={bodyRef} style={{ background: 'transparent' }}>
             {messages.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--ink-4)', textAlign: 'center', marginTop: 16 }}>
-                {isLive ? 'Be the first to say hi' : 'Chat will be available once live'}
+              <div className="empty" style={{ background: 'transparent', border: 'none', padding: 40 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>💬</div>
+                <div style={{ fontSize: 12 }}>{isLive ? 'Be the first to say hi' : 'Chat will be available once live'}</div>
               </div>
             ) : messages.map((m, i) => (
-              <div key={m.id || i} className="msg row" style={{ alignItems: 'flex-start', gap: 8 }}>
-                <Avatar name={m.sender_name} id={m.sender_id || m.sender_name} size={24} fontSize={10} />
+              <div key={m.id || i} className="msg row" style={{ alignItems: 'flex-start', gap: 10, marginBottom: 4 }}>
+                <Avatar name={m.sender_name} id={m.sender_id || m.sender_name} size={28} fontSize={11} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="who">{m.sender_name}</div>
-                  <div className="text">{m.message}</div>
+                  <div className="who" style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink-3)', marginBottom: 2 }}>{m.sender_name}</div>
+                  <div className="text" style={{ fontSize: 13, background: 'var(--surface-hover)', padding: '6px 10px', borderRadius: '0 8px 8px 8px', display: 'inline-block', maxWidth: '100%' }}>{m.message}</div>
                 </div>
               </div>
             ))}
           </div>
-          <form className="chat-input" onSubmit={send}>
+          <form className="chat-input glass" onSubmit={send} style={{ border: 'none', borderTop: '1px solid var(--line)', padding: 12 }}>
             <input
-              placeholder={user ? (isLive ? 'Send a message…' : 'Wait for live to chat') : 'Sign in to chat'}
+              className="input glass sm"
+              placeholder={user ? (isLive ? 'Type a message…' : 'Wait for live to chat') : 'Sign in to chat'}
               value={text}
               onChange={(e) => setText(e.target.value)}
               disabled={!user || !isLive}

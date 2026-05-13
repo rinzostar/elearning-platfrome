@@ -1,72 +1,48 @@
-const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
-const FALLBACK_MODEL = 'gemini-2.5-flash-lite';
-const OPENROUTER_MODEL = 'google/gemma-4-31b-it:free';
+const MISTRAL_KEY = 'dcxWdterV9OBvYyaHu4VSPfoFrahv9O1';
+const MISTRAL_LARGE = 'mistral-large-2411';
+const MISTRAL_MEDIUM = 'mistral-medium-2508';
+const MISTRAL_SMALL = 'mistral-small-2506';
 
-async function directGemini({ prompt, temperature = 0.4 }) {
-  const key = process.env.GOOGLE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
-  if (!key) throw new Error('Gemini API key missing');
+async function directMistral({ prompt, temperature = 0.4, model = MISTRAL_LARGE }) {
   if (!prompt?.trim()) throw new Error('Prompt is empty');
 
-  const request = async (modelName) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature },
-    }),
-  });
-
-  let res = await request(model);
-  if (!process.env.GEMINI_MODEL && res.status === 404) res = await request(FALLBACK_MODEL);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message || 'Gemini request failed');
-  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
-  if (!text) throw new Error('Gemini returned no text');
-  return text;
-}
-
-async function directOpenRouter({ prompt, temperature = 0.4 }) {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error('OpenRouter API key missing');
-
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`,
-      'HTTP-Referer': 'https://conductor.ryan',
-      'X-Title': 'Ryan Conductor',
+      'Authorization': `Bearer ${MISTRAL_KEY}`,
     },
     body: JSON.stringify({
-      model: OPENROUTER_MODEL,
+      model,
       messages: [{ role: 'user', content: prompt }],
       temperature,
     }),
   });
 
   const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message || 'OpenRouter request failed');
+  if (!res.ok) throw new Error(data?.error?.message || `Mistral request failed for ${model}`);
   const text = data?.choices?.[0]?.message?.content?.trim();
-  if (!text) throw new Error('OpenRouter returned no text');
+  if (!text) throw new Error(`Mistral (${model}) returned no text`);
   return text;
 }
 
 export async function callAi({ prompt, temperature = 0.4 }) {
-  try {
-    return await directGemini({ prompt, temperature });
-  } catch (err) {
-    console.warn('Gemini failed, trying OpenRouter fallback:', err.message);
+  const models = [MISTRAL_LARGE, MISTRAL_MEDIUM, MISTRAL_SMALL];
+  let lastErr = null;
+
+  for (const model of models) {
     try {
-      return await directOpenRouter({ prompt, temperature });
-    } catch (fallbackErr) {
-      console.error('OpenRouter fallback also failed:', fallbackErr.message);
-      throw err;
+      return await directMistral({ prompt, temperature, model });
+    } catch (err) {
+      console.warn(`[Renderer Gemini] model ${model} failed:`, err.message);
+      lastErr = err;
     }
   }
+  throw lastErr || new Error('All Mistral models failed');
 }
 
-export { callAi as callGemini };
+export { callAi as callMistral };
+
 
 export function courseGenerationPrompt({ moduleName, request }) {
   return `Create a complete course lesson for a university e-learning platform.

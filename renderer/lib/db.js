@@ -53,11 +53,28 @@ const electronAPI = () => (typeof window !== 'undefined' ? window.electronAPI : 
 const LIVE_TTL_HOURS = 8;
 const liveCutoff = () => new Date(Date.now() - LIVE_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
+// Helper to prevent indefinite hangs
+const DB_TIMEOUT = 10000; // 10s
+async function withTimeout(promise, context = 'Database') {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${context} request timed out`)), DB_TIMEOUT);
+  });
+  try {
+    const res = await Promise.race([promise, timeoutPromise]);
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // ---------- API ----------
 
 export async function listSemesters() {
   if (!HAS_SUPABASE) return ok(mock.semesters);
-  return supabase.from('semesters').select('*').order('id');
+  try {
+    return await withTimeout(supabase.from('semesters').select('*').order('id'), 'listSemesters');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listModulesBySemester(semesterId) {
@@ -65,15 +82,20 @@ export async function listModulesBySemester(semesterId) {
     const rows = mock.modules.filter(m => m.semester_id === Number(semesterId));
     return ok(rows.map(m => ({ ...m, course_count: mock.courses.filter(c => c.module_id === m.id).length })));
   }
-  const { data, error } = await supabase
-    .from('modules')
-    .select('id, name, semester_id, owner_id, profiles:owner_id(full_name), courses(count)')
-    .eq('semester_id', semesterId);
-  if (error) return { data: null, error };
-  return ok(data.map(m => ({
-    id: m.id, name: m.name, semester_id: m.semester_id, owner_id: m.owner_id,
-    owner_name: m.profiles?.full_name, course_count: m.courses?.[0]?.count || 0,
-  })));
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('modules')
+        .select('id, name, semester_id, owner_id, profiles:owner_id(full_name), courses(count)')
+        .eq('semester_id', semesterId),
+      'listModulesBySemester'
+    );
+    if (error) return { data: null, error };
+    return ok(data.map(m => ({
+      id: m.id, name: m.name, semester_id: m.semester_id, owner_id: m.owner_id,
+      owner_name: m.profiles?.full_name, course_count: m.courses?.[0]?.count || 0,
+    })));
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function getModule(id) {
@@ -83,12 +105,17 @@ export async function getModule(id) {
     const sem = mock.semesters.find(s => s.id === m.semester_id);
     return ok({ ...m, semester_label: sem?.label });
   }
-  const { data, error } = await supabase
-    .from('modules')
-    .select('*, profiles:owner_id(full_name), semesters(label)')
-    .eq('id', id).single();
-  if (error) return { data: null, error };
-  return ok({ ...data, owner_name: data.profiles?.full_name, semester_label: data.semesters?.label });
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('modules')
+        .select('*, profiles:owner_id(full_name), semesters(label)')
+        .eq('id', id).single(),
+      'getModule'
+    );
+    if (error) return { data: null, error };
+    return ok({ ...data, owner_name: data.profiles?.full_name, semester_label: data.semesters?.label });
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listCoursesByModule(moduleId) {
@@ -96,13 +123,18 @@ export async function listCoursesByModule(moduleId) {
     const rows = mock.courses.filter(c => c.module_id === Number(moduleId));
     return ok(rows.map(c => ({ ...c, attachment_count: mock.attachments.filter(a => a.course_id === c.id).length })));
   }
-  const { data, error } = await supabase
-    .from('courses')
-    .select('*, attachments(count)')
-    .eq('module_id', moduleId)
-    .order('created_at', { ascending: false });
-  if (error) return { data: null, error };
-  return ok(data.map(c => ({ ...c, attachment_count: c.attachments?.[0]?.count || 0 })));
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('courses')
+        .select('*, attachments(count)')
+        .eq('module_id', moduleId)
+        .order('created_at', { ascending: false }),
+      'listCoursesByModule'
+    );
+    if (error) return { data: null, error };
+    return ok(data.map(c => ({ ...c, attachment_count: c.attachments?.[0]?.count || 0 })));
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listAttachments({ moduleId, courseId } = {}) {
@@ -114,11 +146,13 @@ export async function listAttachments({ moduleId, courseId } = {}) {
     }
     return ok([]);
   }
-  if (courseId) return supabase.from('attachments').select('*').eq('course_id', courseId);
-  const { data: courses } = await supabase.from('courses').select('id').eq('module_id', moduleId);
-  const ids = (courses || []).map(c => c.id);
-  if (!ids.length) return ok([]);
-  return supabase.from('attachments').select('*').in('course_id', ids);
+  try {
+    if (courseId) return await withTimeout(supabase.from('attachments').select('*').eq('course_id', courseId), 'listAttachments:course');
+    const { data: courses } = await supabase.from('courses').select('id').eq('module_id', moduleId);
+    const ids = (courses || []).map(c => c.id);
+    if (!ids.length) return ok([]);
+    return await withTimeout(supabase.from('attachments').select('*').in('course_id', ids), 'listAttachments:module');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function endLivestream(id) {
@@ -127,7 +161,9 @@ export async function endLivestream(id) {
     if (l) l.status = 'ended';
     return ok(true);
   }
-  return supabase.from('livestreams').update({ status: 'ended' }).eq('id', id);
+  try {
+    return await withTimeout(supabase.from('livestreams').update({ status: 'ended' }).eq('id', id), 'endLivestream');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function deletePost(id) {
@@ -137,13 +173,15 @@ export async function deletePost(id) {
     mock.reports = mock.reports.filter(r => r.post_id !== Number(id));
     return ok(true);
   }
-  if (electronAPI()?.deletePost) {
-    const res = await electronAPI().deletePost({ id });
-    if (res?.error) return { data: null, error: new Error(res.error) };
-    return ok(true);
-  }
-  await supabase.from('reports').delete().eq('post_id', id);
-  return supabase.from('posts').delete().eq('id', id);
+  try {
+    if (electronAPI()?.deletePost) {
+      const res = await withTimeout(electronAPI().deletePost({ id }), 'deletePost:ipc');
+      if (res?.error) return { data: null, error: new Error(res.error) };
+      return ok(true);
+    }
+    await supabase.from('reports').delete().eq('post_id', id);
+    return await withTimeout(supabase.from('posts').delete().eq('id', id), 'deletePost:supabase');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function dismissReports(postId) {
@@ -151,12 +189,14 @@ export async function dismissReports(postId) {
     mock.reports = mock.reports.filter(r => r.post_id !== Number(postId));
     return ok(true);
   }
-  if (electronAPI()?.dismissReports) {
-    const res = await electronAPI().dismissReports({ post_id: postId });
-    if (res?.error) return { data: null, error: new Error(res.error) };
-    return ok(true);
-  }
-  return supabase.from('reports').delete().eq('post_id', postId);
+  try {
+    if (electronAPI()?.dismissReports) {
+      const res = await withTimeout(electronAPI().dismissReports({ post_id: postId }), 'dismissReports:ipc');
+      if (res?.error) return { data: null, error: new Error(res.error) };
+      return ok(true);
+    }
+    return await withTimeout(supabase.from('reports').delete().eq('post_id', postId), 'dismissReports:supabase');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listMyModules(profId) {
@@ -169,14 +209,19 @@ export async function listMyModules(profId) {
         course_count: mock.courses.filter(c => c.module_id === m.id).length,
       })));
   }
-  const { data, error } = await supabase
-    .from('modules')
-    .select('*, semesters(label), courses(count)')
-    .eq('owner_id', profId);
-  if (error) return { data: null, error };
-  return ok(data.map(m => ({
-    ...m, semester_label: m.semesters?.label, course_count: m.courses?.[0]?.count || 0,
-  })));
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('modules')
+        .select('*, semesters(label), courses(count)')
+        .eq('owner_id', profId),
+      'listMyModules'
+    );
+    if (error) return { data: null, error };
+    return ok(data.map(m => ({
+      ...m, semester_label: m.semesters?.label, course_count: m.courses?.[0]?.count || 0,
+    })));
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function createCourse({ module_id, title, content = '', yt_url = null }) {
@@ -192,7 +237,13 @@ export async function createCourse({ module_id, title, content = '', yt_url = nu
     mock.courses.unshift(course);
     return ok(course);
   }
-  return supabase.from('courses').insert({ module_id, title, content, yt_url }).select().single();
+  try {
+    return await withTimeout(
+      supabase.from('courses').insert({ module_id, title, content, yt_url }).select().single(),
+      'createCourse',
+      45000 // 45s for potentially large content
+    );
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function updateCourse(id, { title, content, yt_url }) {
@@ -205,7 +256,13 @@ export async function updateCourse(id, { title, content, yt_url }) {
     }
     return ok(true);
   }
-  return supabase.from('courses').update({ title, content, yt_url }).eq('id', id);
+  try {
+    return await withTimeout(
+      supabase.from('courses').update({ title, content, yt_url }).eq('id', id),
+      'updateCourse',
+      45000 // 45s
+    );
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function deleteCourse(id) {
@@ -217,9 +274,11 @@ export async function deleteCourse(id) {
     }
     return ok(true);
   }
-  // Delete attachments first (due to FK)
-  await supabase.from('attachments').delete().eq('course_id', id);
-  return supabase.from('courses').delete().eq('id', id);
+  try {
+    // Delete attachments first (due to FK)
+    await supabase.from('attachments').delete().eq('course_id', id);
+    return await withTimeout(supabase.from('courses').delete().eq('id', id), 'deleteCourse');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function deleteAttachment(id) {
@@ -228,7 +287,9 @@ export async function deleteAttachment(id) {
     if (idx >= 0) mock.attachments.splice(idx, 1);
     return ok(true);
   }
-  return supabase.from('attachments').delete().eq('id', id);
+  try {
+    return await withTimeout(supabase.from('attachments').delete().eq('id', id), 'deleteAttachment');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function createAttachment({ course_id, file_path, file_name }) {
@@ -237,7 +298,12 @@ export async function createAttachment({ course_id, file_path, file_name }) {
     mock.attachments.push(attachment);
     return ok(attachment);
   }
-  return supabase.from('attachments').insert({ course_id, file_path, file_name }).select().single();
+  try {
+    return await withTimeout(
+      supabase.from('attachments').insert({ course_id, file_path, file_name }).select().single(),
+      'createAttachment'
+    );
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listFavorites(userId) {
@@ -247,12 +313,17 @@ export async function listFavorites(userId) {
       ...c, module: mock.modules.find(m => m.id === c.module_id),
     })));
   }
-  const { data, error } = await supabase
-    .from('favorites')
-    .select('courses(*, modules(name))')
-    .eq('user_id', userId);
-  if (error) return { data: null, error };
-  return ok((data || []).map(r => ({ ...r.courses, module: { name: r.courses?.modules?.name } })));
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('favorites')
+        .select('courses(*, modules(name))')
+        .eq('user_id', userId),
+      'listFavorites'
+    );
+    if (error) return { data: null, error };
+    return ok((data || []).map(r => ({ ...r.courses, module: { name: r.courses?.modules?.name } })));
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function toggleFavorite(userId, courseId) {
@@ -262,24 +333,31 @@ export async function toggleFavorite(userId, courseId) {
     else mock.favorites.push({ user_id: userId, course_id: courseId });
     return ok(true);
   }
-  const { data: existing } = await supabase
-    .from('favorites').select().eq('user_id', userId).eq('course_id', courseId).maybeSingle();
-  if (existing) {
-    await supabase.from('favorites').delete().eq('user_id', userId).eq('course_id', courseId);
-  } else {
-    await supabase.from('favorites').insert({ user_id: userId, course_id: courseId });
-  }
-  return ok(true);
+  try {
+    const { data: existing } = await supabase
+      .from('favorites').select().eq('user_id', userId).eq('course_id', courseId).maybeSingle();
+    if (existing) {
+      await withTimeout(supabase.from('favorites').delete().eq('user_id', userId).eq('course_id', courseId), 'toggleFavorite:delete');
+    } else {
+      await withTimeout(supabase.from('favorites').insert({ user_id: userId, course_id: courseId }), 'toggleFavorite:insert');
+    }
+    return ok(true);
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listPosts() {
   if (!HAS_SUPABASE) {
     return ok([...mock.posts].sort((a, b) => b.created_at.localeCompare(a.created_at)));
   }
-  return supabase
-    .from('posts')
-    .select('*, profiles:author_id(full_name)')
-    .order('created_at', { ascending: false });
+  try {
+    return await withTimeout(
+      supabase
+        .from('posts')
+        .select('*, profiles:author_id(full_name)')
+        .order('created_at', { ascending: false }),
+      'listPosts'
+    );
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function createPost({ author_id, content, link = null, file_path = null }) {
@@ -288,12 +366,14 @@ export async function createPost({ author_id, content, link = null, file_path = 
     mock.posts.unshift({ id: nextId(mock.posts), author_id, author_name: u.full_name, content, link, file_path, created_at: new Date().toISOString() });
     return ok(true);
   }
-  if (electronAPI()?.createPost) {
-    const res = await electronAPI().createPost({ author_id, content, link, file_path });
-    if (res?.error) return { data: null, error: new Error(res.error) };
-    return ok(res?.post || true);
-  }
-  return supabase.from('posts').insert({ author_id, content, link, file_path });
+  try {
+    if (electronAPI()?.createPost) {
+      const res = await withTimeout(electronAPI().createPost({ author_id, content, link, file_path }), 'createPost:ipc');
+      if (res?.error) return { data: null, error: new Error(res.error) };
+      return ok(res?.post || true);
+    }
+    return await withTimeout(supabase.from('posts').insert({ author_id, content, link, file_path }), 'createPost:supabase');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function reportPost(postId, reporterId) {
@@ -301,12 +381,14 @@ export async function reportPost(postId, reporterId) {
     mock.reports.push({ id: nextId(mock.reports), post_id: postId, reporter_id: reporterId });
     return ok(true);
   }
-  if (electronAPI()?.reportPost) {
-    const res = await electronAPI().reportPost({ post_id: postId, reporter_id: reporterId });
-    if (res?.error) return { data: null, error: new Error(res.error) };
-    return ok(true);
-  }
-  return supabase.from('reports').insert({ post_id: postId, reporter_id: reporterId });
+  try {
+    if (electronAPI()?.reportPost) {
+      const res = await withTimeout(electronAPI().reportPost({ post_id: postId, reporter_id: reporterId }), 'reportPost:ipc');
+      if (res?.error) return { data: null, error: new Error(res.error) };
+      return ok(true);
+    }
+    return await withTimeout(supabase.from('reports').insert({ post_id: postId, reporter_id: reporterId }), 'reportPost:supabase');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listReports() {
@@ -318,23 +400,30 @@ export async function listReports() {
       return p ? { ...p, count } : null;
     }).filter(Boolean));
   }
-  const { data, error } = await supabase
-    .from('reports')
-    .select('post_id, posts(*, profiles:author_id(full_name))');
-  if (error) return { data: null, error };
-  const grouped = {};
-  (data || []).forEach(r => {
-    if (!r.posts) return;
-    const k = r.post_id;
-    if (!grouped[k]) grouped[k] = { ...r.posts, count: 0, author_name: r.posts.profiles?.full_name };
-    grouped[k].count += 1;
-  });
-  return ok(Object.values(grouped));
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('reports')
+        .select('post_id, posts(*, profiles:author_id(full_name))'),
+      'listReports'
+    );
+    if (error) return { data: null, error };
+    const grouped = {};
+    (data || []).forEach(r => {
+      if (!r.posts) return;
+      const k = r.post_id;
+      if (!grouped[k]) grouped[k] = { ...r.posts, count: 0, author_name: r.posts.profiles?.full_name };
+      grouped[k].count += 1;
+    });
+    return ok(Object.values(grouped));
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listUsers() {
   if (!HAS_SUPABASE) return ok(mock.users);
-  return supabase.from('profiles').select('*').order('full_name');
+  try {
+    return await withTimeout(supabase.from('profiles').select('*').order('full_name'), 'listUsers');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function setBanned(userId, banned) {
@@ -343,7 +432,9 @@ export async function setBanned(userId, banned) {
     if (u) u.banned = banned;
     return ok(true);
   }
-  return supabase.from('profiles').update({ banned }).eq('id', userId);
+  try {
+    return await withTimeout(supabase.from('profiles').update({ banned }).eq('id', userId), 'setBanned');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listAdminModules() {
@@ -354,10 +445,15 @@ export async function listAdminModules() {
       owner_name: mock.users.find(u => u.id === m.owner_id)?.full_name || 'Unassigned',
     })));
   }
-  return supabase
-    .from('modules')
-    .select('*, semesters(label), profiles:owner_id(full_name)')
-    .order('id');
+  try {
+    return await withTimeout(
+      supabase
+        .from('modules')
+        .select('*, semesters(label), profiles:owner_id(full_name)')
+        .order('id'),
+      'listAdminModules'
+    );
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function createModule({ name, semester_id, owner_id }) {
@@ -365,7 +461,9 @@ export async function createModule({ name, semester_id, owner_id }) {
     mock.modules.push({ id: nextId(mock.modules), name, semester_id: Number(semester_id), owner_id });
     return ok(true);
   }
-  return supabase.from('modules').insert({ name, semester_id, owner_id });
+  try {
+    return await withTimeout(supabase.from('modules').insert({ name, semester_id, owner_id }), 'createModule');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function updateModule(id, { name }) {
@@ -374,12 +472,16 @@ export async function updateModule(id, { name }) {
     if (m) m.name = name;
     return ok(true);
   }
-  return supabase.from('modules').update({ name }).eq('id', id);
+  try {
+    return await withTimeout(supabase.from('modules').update({ name }).eq('id', id), 'updateModule');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listProfessors() {
   if (!HAS_SUPABASE) return ok(mock.users.filter(u => u.role === 'professor'));
-  return supabase.from('profiles').select('*').eq('role', 'professor');
+  try {
+    return await withTimeout(supabase.from('profiles').select('*').eq('role', 'professor'), 'listProfessors');
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function getActiveLivestreamForModule(moduleId) {
@@ -392,17 +494,22 @@ export async function getActiveLivestreamForModule(moduleId) {
       (!l.started_at || l.started_at >= cutoff)
     ) || null);
   }
-  const { data } = await supabase
-    .from('livestreams')
-    .select('*')
-    .eq('module_id', moduleId)
-    .eq('room_name', `module-${moduleId}`)
-    .eq('status', 'live')
-    .gte('started_at', liveCutoff())
-    .order('started_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return ok(data);
+  try {
+    const { data } = await withTimeout(
+      supabase
+        .from('livestreams')
+        .select('*')
+        .eq('module_id', moduleId)
+        .eq('room_name', `module-${moduleId}`)
+        .eq('status', 'live')
+        .gte('started_at', liveCutoff())
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      'getActiveLivestream'
+    );
+    return ok(data);
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function listActiveLivestreams() {
@@ -416,26 +523,39 @@ export async function listActiveLivestreams() {
       ...l, module_name: mock.modules.find(m => m.id === l.module_id)?.name,
     })));
   }
-  const { data, error } = await supabase
-    .from('livestreams')
-    .select('*, modules(name), profiles:host_id(full_name)')
-    .eq('status', 'live')
-    .gte('started_at', liveCutoff());
-  if (error) return { data: null, error };
-  return ok((data || []).filter(l => l.room_name === `module-${l.module_id}`));
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('livestreams')
+        .select('*, modules(name), profiles:host_id(full_name)')
+        .eq('status', 'live')
+        .gte('started_at', liveCutoff()),
+      'listActiveLivestreams'
+    );
+    if (error) return { data: null, error };
+    return ok((data || []).filter(l => l.room_name === `module-${l.module_id}`));
+  } catch (e) { return { data: null, error: e }; }
 }
 
 // chat
 export async function listChat(livestreamId) {
   if (!HAS_SUPABASE) return ok([]);
-  return supabase
-    .from('chat_messages')
-    .select('*, profiles:sender_id(full_name)')
-    .eq('livestream_id', livestreamId)
-    .order('created_at', { ascending: true });
+  try {
+    return await withTimeout(
+      supabase
+        .from('chat_messages')
+        .select('*, profiles:sender_id(full_name)')
+        .eq('livestream_id', livestreamId)
+        .order('created_at', { ascending: true }),
+      'listChat'
+    );
+  } catch (e) { return { data: null, error: e }; }
 }
 
 export async function sendChat(livestreamId, senderId, message) {
   if (!HAS_SUPABASE) return ok(true);
-  return supabase.from('chat_messages').insert({ livestream_id: livestreamId, sender_id: senderId, message });
+  try {
+    return await withTimeout(supabase.from('chat_messages').insert({ livestream_id: livestreamId, sender_id: senderId, message }), 'sendChat');
+  } catch (e) { return { data: null, error: e }; }
 }
+

@@ -1,42 +1,25 @@
 import { courseChatPrompt, courseGenerationPrompt, parseGeneratedCourse } from './gemini';
 
-const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
-const FALLBACK_MODEL = 'gemini-2.5-flash-lite';
-const OPENROUTER_MODEL = 'google/gemma-4-31b-it:free';
-
-function browserGeminiKey() {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('gemini_api_key')
-    || process.env.NEXT_PUBLIC_GOOGLE_GEMINI_API_KEY
-    || process.env.NEXT_PUBLIC_GEMINI_API_KEY
-    || '';
-}
-
-function browserOpenRouterKey() {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('openrouter_api_key')
-    || process.env.NEXT_PUBLIC_OPENROUTER_API_KEY
-    || '';
-}
+const MISTRAL_KEY = 'dcxWdterV9OBvYyaHu4VSPfoFrahv9O1';
+const MISTRAL_LARGE = 'mistral-large-2411';
+const MISTRAL_MEDIUM = 'mistral-medium-2508';
+const MISTRAL_SMALL = 'mistral-small-2506';
 
 function cleanAiError(message = '') {
   const m = String(message);
+  if (/Mistral API key missing/i.test(m)) {
+    return 'Mistral key is missing.';
+  }
   if (/leaked|api key not valid|API_KEY_INVALID|permission|denied|PERMISSION_DENIED/i.test(m)) {
-    return 'This API key is blocked or invalid. Paste a fresh key.';
+    return 'The current API key is blocked or invalid.';
   }
   if (/quota|RESOURCE_EXHAUSTED|rate_limit/i.test(m)) {
-    return 'AI quota is exhausted. Use another key or try later.';
-  }
-  if (/missing|localStorage\.gemini_api_key|localStorage\.openrouter_api_key|NEXT_PUBLIC/i.test(m)) {
-    return 'AI is not configured. Add a Gemini or OpenRouter API key first.';
-  }
-  if (/404|not found|models\//i.test(m)) {
-    return 'The selected AI model is unavailable. Try another model.';
+    return 'AI quota is exhausted. Try again later.';
   }
   if (/network|fetch/i.test(m)) {
-    return 'AI request failed. Check your connection and try again.';
+    return 'Network error. Please check your internet connection.';
   }
-  return 'AI request failed. Try again.';
+  return m || 'AI request failed. Try again.';
 }
 
 class AiClientError extends Error {
@@ -46,93 +29,72 @@ class AiClientError extends Error {
   }
 }
 
-async function directGemini(prompt, temperature = 0.4) {
-  const key = browserGeminiKey();
-  const model = localStorage.getItem('gemini_model') || process.env.NEXT_PUBLIC_GEMINI_MODEL || DEFAULT_MODEL;
-  if (!key) throw new AiClientError('missing key');
+async function directMistral(prompt, temperature = 0.4, model = MISTRAL_LARGE) {
+  console.log(`[Renderer AI] Calling Mistral: model=${model}, promptLen=${prompt?.length}`);
 
-  const request = async (modelName) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature },
-    }),
-  });
-
-  let res = await request(model);
-  if (!localStorage.getItem('gemini_model') && res.status === 404) res = await request(FALLBACK_MODEL);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new AiClientError(data?.error?.message || 'Gemini request failed');
-  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim();
-  if (!text) throw new Error('Gemini returned no text');
-  return text;
-}
-
-async function directOpenRouter(prompt, temperature = 0.4) {
-  const key = browserOpenRouterKey();
-  if (!key) throw new Error('OpenRouter API key missing');
-
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`,
-      'HTTP-Referer': 'https://conductor.ryan', // Optional, for OpenRouter tracking
-      'X-Title': 'Ryan Conductor',
+      'Authorization': `Bearer ${MISTRAL_KEY}`,
     },
     body: JSON.stringify({
-      model: OPENROUTER_MODEL,
+      model,
       messages: [{ role: 'user', content: prompt }],
       temperature,
     }),
   });
 
+  console.log(`[Renderer AI] Mistral Response: status=${res.status}, model=${model}`);
+
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || 'OpenRouter request failed');
+  if (!res.ok) {
+    console.error(`[Renderer AI] Mistral Error (${model}):`, JSON.stringify(data));
+    throw new AiClientError(data?.error?.message || `Mistral request failed for ${model}`);
+  }
+
   const text = data?.choices?.[0]?.message?.content?.trim();
-  if (!text) throw new Error('OpenRouter returned no text');
+  if (!text) {
+    console.warn(`[Renderer AI] Mistral (${model}) returned empty text. Full response:`, JSON.stringify(data));
+    throw new Error(`Mistral (${model}) returned no text`);
+  }
   return text;
 }
 
-async function callAi(prompt, temperature = 0.4, preferredProvider = null) {
-  const providers = [];
-  if (preferredProvider === 'openrouter') {
-    providers.push(directOpenRouter, directGemini);
-  } else if (preferredProvider === 'google') {
-    providers.push(directGemini, directOpenRouter);
-  } else {
-    // Default order
-    providers.push(directGemini, directOpenRouter);
-  }
-
+async function callAi(prompt, temperature = 0.4) {
+  console.log(`[Renderer AI] callAi initiated with Mistral chain`);
+  const models = [MISTRAL_LARGE, MISTRAL_MEDIUM, MISTRAL_SMALL];
   let lastErr = null;
-  for (const provider of providers) {
+
+  for (const model of models) {
     try {
-      return await provider(prompt, temperature);
+      return await directMistral(prompt, temperature, model);
     } catch (err) {
-      console.warn(`AI provider ${provider.name} failed:`, err.message);
+      console.warn(`[Renderer AI] Mistral model ${model} failed, trying next... Error: ${err.message}`);
       lastErr = err;
     }
   }
-  throw lastErr || new Error('All AI providers failed');
+
+  console.error(`[Renderer AI] All Mistral models failed. Last error:`, lastErr?.message);
+  throw lastErr || new Error('All AI models failed');
 }
 
-export async function generateCourseDraft({ moduleName, request, provider = 'google' }) {
+export async function generateCourseDraft({ moduleName, request }) {
   if (typeof window !== 'undefined' && window.electronAPI?.generateCourse) {
-    const data = await window.electronAPI.generateCourse({ moduleName, request, provider });
+    const data = await window.electronAPI.generateCourse({ moduleName, request });
     if (data?.error) throw new AiClientError(data.error);
     return data.course;
   }
-  const text = await callAi(courseGenerationPrompt({ moduleName, request }), 0.5, provider);
+  const text = await callAi(courseGenerationPrompt({ moduleName, request }), 0.5);
   return parseGeneratedCourse(text);
 }
 
-export async function chatWithCourse({ mode, question, course, provider = 'google' }) {
+export async function chatWithCourse({ mode, question, course }) {
   if (typeof window !== 'undefined' && window.electronAPI?.chatCourse) {
-    const data = await window.electronAPI.chatCourse({ mode, question, course, provider });
+    const data = await window.electronAPI.chatCourse({ mode, question, course });
     if (data?.error) throw new AiClientError(data.error);
     return data.answer;
   }
-  return callAi(courseChatPrompt({ mode, question, course }), 0.3, provider);
+  return callAi(courseChatPrompt({ mode, question, course }), 0.3);
 }
+

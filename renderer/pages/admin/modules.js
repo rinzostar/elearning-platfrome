@@ -13,17 +13,21 @@ export default function AdminModules() {
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => {
-    const [m, s, p] = await Promise.all([listAdminModules(), listSemesters(), listProfessors()]);
-    const norm = (m.data || []).map(x => ({
-      ...x,
-      semester_label: x.semester_label || x.semesters?.label,
-      owner_name: x.owner_name || x.profiles?.full_name || 'Unassigned',
-    }));
-    setMods(norm);
-    setSems(s.data || []);
-    setProfs(p.data || []);
-    if (s.data?.[0] && !form.semester_id) setForm(f => ({ ...f, semester_id: s.data[0].id }));
-    if (p.data?.[0] && !form.owner_id) setForm(f => ({ ...f, owner_id: p.data[0].id }));
+    try {
+      const [m, s, p] = await Promise.all([listAdminModules(), listSemesters(), listProfessors()]);
+      const norm = (m.data || []).map(x => ({
+        ...x,
+        semester_label: x.semester_label || x.semesters?.label,
+        owner_name: x.owner_name || x.profiles?.full_name || 'Unassigned',
+      }));
+      setMods(norm);
+      setSems(s.data || []);
+      setProfs(p.data || []);
+      if (s.data?.[0] && !form.semester_id) setForm(f => ({ ...f, semester_id: s.data[0].id }));
+      if (p.data?.[0] && !form.owner_id) setForm(f => ({ ...f, owner_id: p.data[0].id }));
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, []);
 
@@ -35,8 +39,12 @@ export default function AdminModules() {
       setForm(f => ({ ...f, name: '' }));
       toast.success('Module created');
       await refresh();
-    } catch (err) { toast.error(err.message); }
-    setBusy(false);
+    } catch (err) { 
+      console.error('Add module failed:', err);
+      toast.error(err.message); 
+    } finally {
+      setBusy(false);
+    }
   };
 
   const goLive = async (mid) => {
