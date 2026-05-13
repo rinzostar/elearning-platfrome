@@ -1,13 +1,11 @@
 import Layout from '../../components/Layout';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-import { useAuth } from '../../lib/auth';
 import { listAdminModules, listSemesters, listProfessors, createModule } from '../../lib/db';
 import { toast } from '../../lib/toast';
 
 export default function AdminModules() {
   const router = useRouter();
-  const { user } = useAuth();
   const [mods, setMods] = useState([]);
   const [sems, setSems] = useState([]);
   const [profs, setProfs] = useState([]);
@@ -42,13 +40,7 @@ export default function AdminModules() {
   };
 
   const goLive = async (mid) => {
-    const r = await fetch('/api/start-live', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ module_id: mid, host_id: user.id }),
-    });
-    const j = await r.json();
-    if (j.ok) router.push(`/live?id=${j.livestream.id}&room=${j.livestream.room_name}`);
-    else toast.error(j.error || 'Failed');
+    router.push(`/live?module=${mid}`);
   };
 
   return (

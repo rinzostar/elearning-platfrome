@@ -1,5 +1,5 @@
 -- Run this in Supabase SQL editor.
--- Then: disable RLS on all tables, create buckets `course-files` and `post-files` (public).
+-- This script sets up the tables and DISABLES all security (RLS) for maximum simplicity.
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id),
@@ -41,9 +41,12 @@ create table if not exists courses (
   id serial primary key,
   module_id int references modules(id),
   title text,
+  content text default '',
   yt_url text,
   created_at timestamptz default now()
 );
+
+alter table courses add column if not exists content text default '';
 
 create table if not exists attachments (
   id serial primary key,
@@ -90,3 +93,21 @@ create table if not exists chat_messages (
   message text,
   created_at timestamptz default now()
 );
+
+-- DISABLE RLS ON EVERYTHING
+-- This makes the database a "Wild West" where anyone can do anything. 🤠
+alter table profiles disable row level security;
+alter table semesters disable row level security;
+alter table modules disable row level security;
+alter table courses disable row level security;
+alter table attachments disable row level security;
+alter table favorites disable row level security;
+alter table posts disable row level security;
+alter table reports disable row level security;
+alter table livestreams disable row level security;
+alter table chat_messages disable row level security;
+
+-- Storage is usually public if buckets are created as public, but these commands help
+-- (Run these in the SQL editor to ensure storage is also wide open)
+-- UPDATE storage.buckets SET public = true WHERE id IN ('course-files', 'post-files');
+

@@ -1,8 +1,14 @@
 // Tiny pub/sub toast system. No deps.
 let listeners = [];
 let counter = 0;
+let lastError = { message: '', at: 0 };
 
 export function toast(message, opts = {}) {
+  if ((opts.kind || 'info') === 'error') {
+    const now = Date.now();
+    if (lastError.message === message && now - lastError.at < 2500) return null;
+    lastError = { message, at: now };
+  }
   const t = {
     id: ++counter,
     message,

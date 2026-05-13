@@ -1,4 +1,5 @@
 import Sidebar from './Sidebar';
+import LiveNotifications from './LiveNotifications';
 import { useRequireAuth } from '../lib/auth';
 
 export default function Layout({ children }) {
@@ -12,6 +13,7 @@ export default function Layout({ children }) {
     <div className="app">
       <Sidebar />
       <main className="main">{children}</main>
+      <LiveNotifications />
     </div>
   );
 }

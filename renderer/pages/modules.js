@@ -11,6 +11,7 @@ import { toast } from '../lib/toast';
 export default function MyModules() {
   const router = useRouter();
   const { user } = useAuth();
+  const canTeach = user?.role === 'professor' || user?.role === 'admin';
   const [mods, setMods] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);
@@ -18,25 +19,19 @@ export default function MyModules() {
   const [yt, setYt] = useState({ title: '', url: '' });
 
   const refresh = async () => {
-    if (!user) return;
+    if (!user || !canTeach) {
+      setMods([]);
+      setLoading(false);
+      return;
+    }
     const { data } = await listMyModules(user.id);
     setMods(data || []);
     setLoading(false);
   };
-  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [user?.id]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [user?.id, canTeach]);
 
-  const goLive = async (mid) => {
-    setBusy('live-' + mid);
-    try {
-      const r = await fetch('/api/start-live', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ module_id: mid, host_id: user.id }),
-      });
-      const j = await r.json();
-      if (j.ok) router.push(`/live?id=${j.livestream.id}&room=${j.livestream.room_name}`);
-      else toast.error(j.error || 'Failed');
-    } catch (e) { toast.error(e.message); }
-    setBusy(null);
+  const goLive = (mid) => {
+    router.push(`/live?module=${mid}`);
   };
 
   const addYoutube = async () => {
@@ -92,6 +87,8 @@ export default function MyModules() {
         <div className="grid auto">
           {[0, 1, 2].map(i => <div key={i} className="skel-card"><div className="skel" style={{ width: 100, height: 14 }} /><div className="skel" style={{ width: 180, height: 18 }} /></div>)}
         </div>
+      ) : !canTeach ? (
+        <div className="empty">Teaching tools are only available for professors.</div>
       ) : mods.length === 0 ? (
         <div className="empty">You don't own any modules yet. Ask an admin to assign one.</div>
       ) : (

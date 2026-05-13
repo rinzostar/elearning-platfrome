@@ -14,6 +14,42 @@ function timeAgo(iso) {
   return Math.floor(s / 86400) + 'd';
 }
 
+function fileNameFromPath(path = '') {
+  return decodeURIComponent(path.split('/').pop() || 'attachment').replace(/^\d+-/, '');
+}
+
+function PostAttachment({ post }) {
+  if (!post.file_path) return null;
+  const url = publicUrl('post-files', post.file_path);
+  const name = fileNameFromPath(post.file_path);
+  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(name);
+  const isPdf = /\.pdf$/i.test(name);
+
+  if (isImage) {
+    return (
+      <a className="post-attachment preview" href={url} target="_blank" rel="noreferrer">
+        <img src={url} alt={name} />
+      </a>
+    );
+  }
+
+  if (isPdf) {
+    return (
+      <div className="post-attachment preview">
+        <iframe src={url} title={name} />
+        <a className="btn ghost sm" href={url} target="_blank" rel="noreferrer">Open PDF</a>
+      </div>
+    );
+  }
+
+  return (
+    <a className="post-attachment file" href={url} target="_blank" rel="noreferrer">
+      <span>📎</span>
+      <span>{name}</span>
+    </a>
+  );
+}
+
 export default function Community() {
   const { user } = useAuth();
   const [posts, setPosts] = useState([]);
@@ -44,7 +80,8 @@ export default function Community() {
         const up = await uploadFile('post-files', file);
         file_path = up.path;
       }
-      await createPost({ author_id: user.id, content: text.trim(), link: link || null, file_path });
+      const { error } = await createPost({ author_id: user.id, content: text.trim(), link: link || null, file_path });
+      if (error) throw error;
       setText(''); setLink(''); setFile(null); setShowLink(false);
       await refresh();
       toast.success('Posted');
@@ -56,7 +93,8 @@ export default function Community() {
 
   const report = async (postId) => {
     if (!user) return;
-    await reportPost(postId, user.id);
+    const { error } = await reportPost(postId, user.id);
+    if (error) return toast.error(error.message);
     toast.success('Reported. Admins will review.');
   };
 
@@ -123,11 +161,7 @@ export default function Community() {
                   🔗 {p.link.replace(/^https?:\/\//, '').slice(0, 40)}
                 </a>
               )}
-              {p.file_path && (
-                <a className="pill" href={publicUrl('post-files', p.file_path)} target="_blank" rel="noreferrer">
-                  📎 attachment
-                </a>
-              )}
+              <PostAttachment post={p} />
               <div className="actions" style={{ marginTop: 10 }}>
                 <button className="btn ghost sm" style={{ marginLeft: 'auto', color: 'var(--danger)' }} onClick={() => report(p.id)}>
                   Report

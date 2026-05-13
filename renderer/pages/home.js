@@ -47,7 +47,7 @@ export default function Home() {
               <h3 style={{ marginTop: 8 }}>{lives[0].module_name || lives[0].modules?.name || 'Live session'}</h3>
               <p style={{ color: 'var(--ink-3)', marginTop: 4 }}>{lives[0].profiles?.full_name || 'Professor'}</p>
             </div>
-            <Link href={`/live?id=${lives[0].id}&room=${lives[0].room_name}`} className="btn live">Join live</Link>
+            <Link href={`/live?module=${lives[0].module_id}`} className="btn live">Join live</Link>
           </div>
         </div>
       )}

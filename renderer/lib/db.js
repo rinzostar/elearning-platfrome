@@ -23,9 +23,9 @@ const mock = {
     { id: 4, semester_id: 7, name: 'Linear Algebra', owner_id: 'mock-professor', owner_name: 'Dr. A. Benali' },
   ],
   courses: [
-    { id: 1, module_id: 1, title: 'Vectors and spaces', yt_url: 'https://www.youtube.com/watch?v=fNk_zzaMoSs', created_at: '2025-05-10' },
-    { id: 2, module_id: 1, title: 'Matrix operations', yt_url: null, created_at: '2025-05-09' },
-    { id: 3, module_id: 1, title: 'Linear transformations', yt_url: 'https://www.youtube.com/watch?v=kYB8IZa5AuE', created_at: '2025-05-07' },
+    { id: 1, module_id: 1, title: 'Vectors and spaces', content: 'Intro notes for vectors and spaces.\nhttps://www.youtube.com/watch?v=fNk_zzaMoSs', yt_url: 'https://www.youtube.com/watch?v=fNk_zzaMoSs', created_at: '2025-05-10' },
+    { id: 2, module_id: 1, title: 'Matrix operations', content: 'Matrix operation notes and exercises.', yt_url: null, created_at: '2025-05-09' },
+    { id: 3, module_id: 1, title: 'Linear transformations', content: 'Linear transformations overview.', yt_url: 'https://www.youtube.com/watch?v=kYB8IZa5AuE', created_at: '2025-05-07' },
   ],
   attachments: [
     { id: 1, course_id: 1, file_name: 'Lecture-01.pdf', file_path: '#' },
@@ -49,6 +49,9 @@ const mock = {
 
 const ok = (data) => ({ data, error: null });
 const nextId = (arr) => (arr.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1);
+const electronAPI = () => (typeof window !== 'undefined' ? window.electronAPI : null);
+const LIVE_TTL_HOURS = 8;
+const liveCutoff = () => new Date(Date.now() - LIVE_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
 // ---------- API ----------
 
@@ -134,6 +137,11 @@ export async function deletePost(id) {
     mock.reports = mock.reports.filter(r => r.post_id !== Number(id));
     return ok(true);
   }
+  if (electronAPI()?.deletePost) {
+    const res = await electronAPI().deletePost({ id });
+    if (res?.error) return { data: null, error: new Error(res.error) };
+    return ok(true);
+  }
   await supabase.from('reports').delete().eq('post_id', id);
   return supabase.from('posts').delete().eq('id', id);
 }
@@ -143,12 +151,23 @@ export async function dismissReports(postId) {
     mock.reports = mock.reports.filter(r => r.post_id !== Number(postId));
     return ok(true);
   }
+  if (electronAPI()?.dismissReports) {
+    const res = await electronAPI().dismissReports({ post_id: postId });
+    if (res?.error) return { data: null, error: new Error(res.error) };
+    return ok(true);
+  }
   return supabase.from('reports').delete().eq('post_id', postId);
 }
 
 export async function listMyModules(profId) {
   if (!HAS_SUPABASE) {
-    return ok(mock.modules.map(m => ({ ...m, semester_label: mock.semesters.find(s => s.id === m.semester_id)?.label })));
+    return ok(mock.modules
+      .filter(m => m.owner_id === profId)
+      .map(m => ({
+        ...m,
+        semester_label: mock.semesters.find(s => s.id === m.semester_id)?.label,
+        course_count: mock.courses.filter(c => c.module_id === m.id).length,
+      })));
   }
   const { data, error } = await supabase
     .from('modules')
@@ -158,6 +177,67 @@ export async function listMyModules(profId) {
   return ok(data.map(m => ({
     ...m, semester_label: m.semesters?.label, course_count: m.courses?.[0]?.count || 0,
   })));
+}
+
+export async function createCourse({ module_id, title, content = '', yt_url = null }) {
+  if (!HAS_SUPABASE) {
+    const course = {
+      id: nextId(mock.courses),
+      module_id: Number(module_id),
+      title,
+      content,
+      yt_url,
+      created_at: new Date().toISOString(),
+    };
+    mock.courses.unshift(course);
+    return ok(course);
+  }
+  return supabase.from('courses').insert({ module_id, title, content, yt_url }).select().single();
+}
+
+export async function updateCourse(id, { title, content, yt_url }) {
+  if (!HAS_SUPABASE) {
+    const c = mock.courses.find(x => x.id === Number(id));
+    if (c) {
+      if (title !== undefined) c.title = title;
+      if (content !== undefined) c.content = content;
+      if (yt_url !== undefined) c.yt_url = yt_url;
+    }
+    return ok(true);
+  }
+  return supabase.from('courses').update({ title, content, yt_url }).eq('id', id);
+}
+
+export async function deleteCourse(id) {
+  if (!HAS_SUPABASE) {
+    const idx = mock.courses.findIndex(x => x.id === Number(id));
+    if (idx >= 0) {
+      mock.courses.splice(idx, 1);
+      mock.attachments = mock.attachments.filter(a => a.course_id !== Number(id));
+    }
+    return ok(true);
+  }
+  // Delete attachments first (due to FK)
+  await supabase.from('attachments').delete().eq('course_id', id);
+  return supabase.from('courses').delete().eq('id', id);
+}
+
+export async function deleteAttachment(id) {
+  if (!HAS_SUPABASE) {
+    const idx = mock.attachments.findIndex(x => x.id === Number(id));
+    if (idx >= 0) mock.attachments.splice(idx, 1);
+    return ok(true);
+  }
+  return supabase.from('attachments').delete().eq('id', id);
+}
+
+export async function createAttachment({ course_id, file_path, file_name }) {
+  if (!HAS_SUPABASE) {
+    const attachment = { id: nextId(mock.attachments), course_id: Number(course_id), file_path, file_name };
+    mock.attachments.push(attachment);
+    return ok(attachment);
+  }
+  return supabase.from('attachments').insert({ course_id, file_path, file_name }).select().single();
 }
 
 export async function listFavorites(userId) {
@@ -208,12 +288,22 @@ export async function createPost({ author_id, content, link = null, file_path = 
     mock.posts.unshift({ id: nextId(mock.posts), author_id, author_name: u.full_name, content, link, file_path, created_at: new Date().toISOString() });
     return ok(true);
   }
+  if (electronAPI()?.createPost) {
+    const res = await electronAPI().createPost({ author_id, content, link, file_path });
+    if (res?.error) return { data: null, error: new Error(res.error) };
+    return ok(res?.post || true);
+  }
   return supabase.from('posts').insert({ author_id, content, link, file_path });
 }
 
 export async function reportPost(postId, reporterId) {
   if (!HAS_SUPABASE) {
     mock.reports.push({ id: nextId(mock.reports), post_id: postId, reporter_id: reporterId });
+    return ok(true);
+  }
+  if (electronAPI()?.reportPost) {
+    const res = await electronAPI().reportPost({ post_id: postId, reporter_id: reporterId });
+    if (res?.error) return { data: null, error: new Error(res.error) };
     return ok(true);
   }
   return supabase.from('reports').insert({ post_id: postId, reporter_id: reporterId });
@@ -278,6 +368,15 @@ export async function createModule({ name, semester_id, owner_id }) {
   return supabase.from('modules').insert({ name, semester_id, owner_id });
 }
 
+export async function updateModule(id, { name }) {
+  if (!HAS_SUPABASE) {
+    const m = mock.modules.find(x => x.id === Number(id));
+    if (m) m.name = name;
+    return ok(true);
+  }
+  return supabase.from('modules').update({ name }).eq('id', id);
+}
+
 export async function listProfessors() {
   if (!HAS_SUPABASE) return ok(mock.users.filter(u => u.role === 'professor'));
   return supabase.from('profiles').select('*').eq('role', 'professor');
@@ -285,13 +384,21 @@ export async function listProfessors() {
 
 export async function getActiveLivestreamForModule(moduleId) {
   if (!HAS_SUPABASE) {
-    return ok(mock.livestreams.find(l => l.module_id === Number(moduleId) && l.status === 'live') || null);
+    const cutoff = liveCutoff();
+    return ok(mock.livestreams.find(l =>
+      l.module_id === Number(moduleId) &&
+      l.room_name === `module-${moduleId}` &&
+      l.status === 'live' &&
+      (!l.started_at || l.started_at >= cutoff)
+    ) || null);
   }
   const { data } = await supabase
     .from('livestreams')
     .select('*')
     .eq('module_id', moduleId)
+    .eq('room_name', `module-${moduleId}`)
     .eq('status', 'live')
+    .gte('started_at', liveCutoff())
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -300,14 +407,22 @@ export async function getActiveLivestreamForModule(moduleId) {
 
 export async function listActiveLivestreams() {
   if (!HAS_SUPABASE) {
-    return ok(mock.livestreams.filter(l => l.status === 'live').map(l => ({
+    const cutoff = liveCutoff();
+    return ok(mock.livestreams.filter(l =>
+      l.status === 'live' &&
+      l.room_name === `module-${l.module_id}` &&
+      (!l.started_at || l.started_at >= cutoff)
+    ).map(l => ({
       ...l, module_name: mock.modules.find(m => m.id === l.module_id)?.name,
     })));
   }
-  return supabase
+  const { data, error } = await supabase
     .from('livestreams')
     .select('*, modules(name), profiles:host_id(full_name)')
-    .eq('status', 'live');
+    .eq('status', 'live')
+    .gte('started_at', liveCutoff());
+  if (error) return { data: null, error };
+  return ok((data || []).filter(l => l.room_name === `module-${l.module_id}`));
 }
 
 // chat
