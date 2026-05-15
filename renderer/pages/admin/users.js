@@ -1,6 +1,6 @@
 import Layout from '../../components/Layout';
 import { useEffect, useState } from 'react';
-import { listUsers, setBanned } from '../../lib/db';
+import { listUsers, setBanned, setCommunityAdmin } from '../../lib/db';
 import { HAS_SUPABASE } from '../../lib/supabase';
 import { toast } from '../../lib/toast';
 import Avatar from '../../components/Avatar';
@@ -9,7 +9,7 @@ export default function AdminUsers() {
   const [open, setOpen] = useState(false);
   const [users, setUsers] = useState([]);
   const [q, setQ] = useState('');
-  const [form, setForm] = useState({ full_name: '', email: '', role: 'student', dob: '' });
+  const [form, setForm] = useState({ full_name: '', email: '', role: 'student', dob: '', year_code: 'L1' });
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => {
@@ -34,12 +34,13 @@ export default function AdminUsers() {
         users.unshift({
           id: 'mock-' + Date.now(),
           full_name: form.full_name, email: form.email, role: form.role, banned: false,
+          dob: form.dob, year_code: form.year_code
         });
         setUsers([...users]);
         const suffix = form.role === 'professor' ? 'prof' : (form.role === 'admin' ? 'admin' : 'std');
         toast.success(`Demo: created. Password would be ${form.dob}_${suffix}`, { duration: 6000 });
       }
-      setForm({ full_name: '', email: '', role: 'student', dob: '' });
+      setForm({ full_name: '', email: '', role: 'student', dob: '', year_code: 'L1' });
       await refresh();
       setOpen(false);
     } catch (err) { 
@@ -48,6 +49,13 @@ export default function AdminUsers() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const toggleCommunityAdmin = async (u) => {
+    const newVal = !u.is_community_admin;
+    await setCommunityAdmin(u.id, newVal);
+    toast.success(newVal ? 'Promoted to Community Admin' : 'Demoted from Community Admin');
+    await refresh();
   };
 
   const toggleBan = async (u) => {
@@ -106,6 +114,18 @@ export default function AdminUsers() {
                 <option value="admin">Admin</option>
               </select>
             </div>
+            {form.role === 'student' && (
+              <div className="field">
+                <label>Year / Level</label>
+                <select className="select" value={form.year_code} onChange={(e) => setForm({ ...form, year_code: e.target.value })}>
+                  <option value="L1">L1 (Year 1)</option>
+                  <option value="L2">L2 (Year 2)</option>
+                  <option value="L3">L3 (Year 3)</option>
+                  <option value="M1">M1 (Master 1)</option>
+                  <option value="M2">M2 (Master 2)</option>
+                </select>
+              </div>
+            )}
             <div className="field">
               <label>Date of birth (dd/mm/yyyy)</label>
               <input className="input" placeholder="01/01/2000" required value={form.dob} onChange={(e) => setForm({ ...form, dob: e.target.value })} />
@@ -133,20 +153,33 @@ export default function AdminUsers() {
               <td>
                 <div className="row" style={{ gap: 10 }}>
                   <Avatar name={u.full_name} id={u.id} size={28} fontSize={11} />
-                  {u.full_name}
+                  <div>
+                    {u.full_name}
+                    {u.is_community_admin && <div style={{ fontSize: 10, color: 'var(--brand)' }}>Community Admin ({u.year_code})</div>}
+                  </div>
                 </div>
               </td>
               <td style={{ color: 'var(--ink-3)' }}>{u.email}</td>
-              <td><span className="pill">{u.role}</span></td>
+              <td>
+                <span className="pill">{u.role}</span>
+                {u.role === 'student' && u.year_code && <span className="pill" style={{ marginLeft: 4 }}>{u.year_code}</span>}
+              </td>
               <td>
                 {u.banned
                   ? <span className="pill" style={{ background: '#fee2e2', color: 'var(--danger)' }}>Banned</span>
                   : <span className="pill">Active</span>}
               </td>
               <td style={{ textAlign: 'right' }}>
-                <button className="btn danger sm" onClick={() => toggleBan(u)}>
-                  {u.banned ? 'Unban' : 'Ban'}
-                </button>
+                <div className="row end" style={{ gap: 6 }}>
+                  {u.role === 'student' && (
+                    <button className={`btn sm ${u.is_community_admin ? 'brand' : 'ghost'}`} onClick={() => toggleCommunityAdmin(u)}>
+                      {u.is_community_admin ? '★ Admin' : '☆ Make Admin'}
+                    </button>
+                  )}
+                  <button className="btn danger sm" onClick={() => toggleBan(u)}>
+                    {u.banned ? 'Unban' : 'Ban'}
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

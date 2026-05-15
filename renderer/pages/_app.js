@@ -1,6 +1,26 @@
 import '../styles/globals.css';
 import { AuthProvider } from '../lib/auth';
+import { HierarchyProvider } from '../lib/HierarchyContext';
 import Toaster from '../components/Toaster';
+import AdminPanel from '../components/AdminPanel';
+import { useEffect, useState } from 'react';
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => {
+    const msg = e.message || '';
+    if (msg.includes('clipboard') || msg.includes('image input') || msg.includes('does not support')) {
+      e.preventDefault();
+      return true;
+    }
+  });
+
+  window.addEventListener('unhandledrejection', (e) => {
+    const msg = e.reason?.message || e.reason || '';
+    if (msg.includes('clipboard') || msg.includes('image input') || msg.includes('does not support')) {
+      e.preventDefault();
+    }
+  });
+}
 
 if (typeof window !== 'undefined' && window.electronAPI) {
   const originalFetch = window.fetch;
@@ -30,10 +50,33 @@ if (typeof window !== 'undefined' && window.electronAPI) {
 }
 
 export default function App({ Component, pageProps }) {
+  const [darkMode, setDarkMode] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+
+  useEffect(() => {
+    const isDark = localStorage.getItem('darkMode') === 'true';
+    setDarkMode(isDark);
+    if (isDark) document.body.classList.add('dark-mode');
+  }, []);
+
+  const toggleDarkMode = () => {
+    const newVal = !darkMode;
+    setDarkMode(newVal);
+    localStorage.setItem('darkMode', newVal);
+    if (newVal) document.body.classList.add('dark-mode');
+    else document.body.classList.remove('dark-mode');
+  };
+
   return (
     <AuthProvider>
-      <Component {...pageProps} />
-      <Toaster />
+      <HierarchyProvider>
+        <Component {...pageProps} toggleDarkMode={toggleDarkMode} darkMode={darkMode} />
+        <button className="admin-fab" onClick={() => setAdminOpen(o => !o)} title="Admin Panel">
+          <i className="fas fa-cog"></i>
+        </button>
+        <AdminPanel isOpen={adminOpen} onClose={() => setAdminOpen(false)} />
+        <Toaster />
+      </HierarchyProvider>
     </AuthProvider>
   );
 }

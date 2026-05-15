@@ -1,101 +1,51 @@
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useAuth } from '../lib/auth';
-import Avatar from './Avatar';
 
 const ICONS = {
-  home: 'M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V11z',
-  browse: 'M4 5h16M4 12h16M4 19h10',
-  community: 'M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM3 21v-1a5 5 0 0 1 5-5h8a5 5 0 0 1 5 5v1',
-  modules: 'M3 7l9-4 9 4-9 4-9-4zm0 5l9 4 9-4M3 17l9 4 9-4',
-  users: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0',
-  reports: 'M9 17l3 3 7-7M5 12V5h14v7M5 19h6',
-  signout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+  home: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
+  courses: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+  community: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2m16-10V7a4 4 0 00-8 0v4M23 21v-2a4 4 0 00-3-3.87m-4-12a4 4 0 010 7.75',
+  profile: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h10a7 7 0 00-7-7z',
 };
 
 function Icon({ name }) {
   return (
-    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d={ICONS[name]} />
-    </svg>
+    <div className="nav-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d={ICONS[name]} />
+      </svg>
+    </div>
   );
 }
 
-export default function Sidebar() {
+export default function BottomNav() {
   const router = useRouter();
-  const { user, signOut, switchRole, mock } = useAuth();
-  const role = user?.role || 'student';
+  const { user } = useAuth();
+  
   const is = (p) => router.pathname === p || router.pathname.startsWith(p + '/');
 
-  const handleSignOut = async () => {
-    await signOut();
-    router.replace('/login');
-  };
-
   return (
-    <aside className="sidebar">
-      <div className="titlebar-pad" />
-      <div className="brand">
-        <div className="dot" />
-        <span>Lumen</span>
-      </div>
-
-      <div className="nav-section">Learn</div>
-      <Link href="/home" className={`nav-item ${is('/home') ? 'active' : ''}`}><Icon name="home" />Home</Link>
-      <Link href="/browse" className={`nav-item ${is('/browse') ? 'active' : ''}`}><Icon name="browse" />Browse</Link>
-      <Link href="/community" className={`nav-item ${is('/community') ? 'active' : ''}`}><Icon name="community" />Community</Link>
-
-      {role === 'professor' && (
-        <>
-          <div className="nav-section">Teach</div>
-          <Link href="/modules" className={`nav-item ${is('/modules') ? 'active' : ''}`}><Icon name="modules" />My modules</Link>
-        </>
-      )}
-
-      {role === 'admin' && (
-        <>
-          <div className="nav-section">Admin</div>
-          <Link href="/admin/users" className={`nav-item ${is('/admin/users') ? 'active' : ''}`}><Icon name="users" />Users</Link>
-          <Link href="/admin/modules" className={`nav-item ${is('/admin/modules') ? 'active' : ''}`}><Icon name="modules" />Modules</Link>
-          <Link href="/admin/reports" className={`nav-item ${is('/admin/reports') ? 'active' : ''}`}><Icon name="reports" />Reports</Link>
-        </>
-      )}
-
-      <div style={{ flex: 1 }} />
-
-      {mock && (
-        <div style={{ padding: '0 6px 12px' }}>
-          <div className="nav-section" style={{ paddingLeft: 4 }}>Demo · switch role</div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {['student', 'professor', 'admin'].map(r => (
-              <button
-                key={r}
-                onClick={() => switchRole(r)}
-                className="btn ghost sm"
-                style={{
-                  flex: 1, justifyContent: 'center', padding: '4px 6px', fontSize: 11,
-                  background: role === r ? 'var(--ink)' : 'transparent',
-                  color: role === r ? 'white' : 'var(--ink-2)',
-                  borderColor: role === r ? 'var(--ink)' : 'var(--line-2)',
-                }}
-              >{r[0].toUpperCase() + r.slice(1)}</button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="user-card">
-        <Avatar name={user?.name || 'You'} id={user?.id} size={32} />
-        <div className="user-meta" style={{ flex: 1, minWidth: 0 }}>
-          <div className="name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {user?.name || 'Guest'}
-          </div>
-          <div className="role">{role}</div>
-        </div>
-        <button onClick={handleSignOut} className="icon-btn" title="Sign out">
-          <Icon name="signout" />
-        </button>
-      </div>
-    </aside>
+    <nav className="bottom-nav">
+      <Link href="/home" className={`nav-item ${is('/home') ? 'active' : ''}`}>
+        <Icon name="home" />
+        <span className="nav-label">Home</span>
+      </Link>
+      
+      <Link href="/browse" className={`nav-item ${is('/browse') ? 'active' : ''}`}>
+        <Icon name="courses" />
+        <span className="nav-label">Courses</span>
+      </Link>
+      
+      <Link href="/community" className={`nav-item ${is('/community') ? 'active' : ''}`}>
+        <Icon name="community" />
+        <span className="nav-label">Community</span>
+      </Link>
+      
+      <Link href="/profile" className={`nav-item ${is('/profile') ? 'active' : ''}`}>
+        <Icon name="profile" />
+        <span className="nav-label">Profile</span>
+      </Link>
+    </nav>
   );
 }

@@ -5,7 +5,7 @@ const MISTRAL_LARGE = 'mistral-large-2411';
 const MISTRAL_MEDIUM = 'mistral-medium-2508';
 const MISTRAL_SMALL = 'mistral-small-2506';
 
-function cleanAiError(message = '') {
+export function cleanAiError(message = '') {
   const m = String(message);
   if (/Mistral API key missing/i.test(m)) {
     return 'Mistral key is missing.';
@@ -18,6 +18,9 @@ function cleanAiError(message = '') {
   }
   if (/network|fetch/i.test(m)) {
     return 'Network error. Please check your internet connection.';
+  }
+  if (/clipboard|image input|does not support/i.test(m)) {
+    return 'Image paste is not supported. Please type your request.';
   }
   return m || 'AI request failed. Try again.';
 }
@@ -49,8 +52,12 @@ async function directMistral(prompt, temperature = 0.4, model = MISTRAL_LARGE) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const rawMsg = data?.error?.message || `Mistral request failed for ${model}`;
+    if (/clipboard|image input|does not support/i.test(rawMsg)) {
+      throw new AiClientError(rawMsg);
+    }
     console.error(`[Renderer AI] Mistral Error (${model}):`, JSON.stringify(data));
-    throw new AiClientError(data?.error?.message || `Mistral request failed for ${model}`);
+    throw new AiClientError(rawMsg);
   }
 
   const text = data?.choices?.[0]?.message?.content?.trim();

@@ -6,7 +6,10 @@ create table if not exists profiles (
   role text check (role in ('admin','professor','student')),
   full_name text,
   email text,
-  banned boolean default false
+  banned boolean default false,
+  dob text,
+  year_code text,
+  is_community_admin boolean default false
 );
 
 create table if not exists semesters (
@@ -35,6 +38,31 @@ create table if not exists modules (
   semester_id int references semesters(id),
   name text,
   owner_id uuid references profiles(id)
+);
+
+create table if not exists module_teachers (
+  module_id int references modules(id),
+  professor_id uuid references profiles(id),
+  primary key (module_id, professor_id)
+);
+
+create table if not exists teaching_requests (
+  id serial primary key,
+  professor_id uuid references profiles(id),
+  module_id int references modules(id),
+  status text default 'pending' check (status in ('pending','approved','declined')),
+  created_at timestamptz default now()
+);
+
+create table if not exists notifications (
+  id serial primary key,
+  user_id uuid references profiles(id),
+  title text,
+  message text,
+  type text,
+  link text,
+  is_read boolean default false,
+  created_at timestamptz default now()
 );
 
 create table if not exists courses (
@@ -67,8 +95,12 @@ create table if not exists posts (
   content text,
   link text,
   file_path text,
+  year_code text,
   created_at timestamptz default now()
 );
+
+-- Ensure year_code exists if table already existed
+alter table posts add column if not exists year_code text;
 
 create table if not exists reports (
   id serial primary key,
@@ -95,10 +127,12 @@ create table if not exists chat_messages (
 );
 
 -- DISABLE RLS ON EVERYTHING
--- This makes the database a "Wild West" where anyone can do anything. 🤠
 alter table profiles disable row level security;
 alter table semesters disable row level security;
 alter table modules disable row level security;
+alter table module_teachers disable row level security;
+alter table teaching_requests disable row level security;
+alter table notifications disable row level security;
 alter table courses disable row level security;
 alter table attachments disable row level security;
 alter table favorites disable row level security;
@@ -106,8 +140,3 @@ alter table posts disable row level security;
 alter table reports disable row level security;
 alter table livestreams disable row level security;
 alter table chat_messages disable row level security;
-
--- Storage is usually public if buckets are created as public, but these commands help
--- (Run these in the SQL editor to ensure storage is also wide open)
--- UPDATE storage.buckets SET public = true WHERE id IN ('course-files', 'post-files');
-

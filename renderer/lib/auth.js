@@ -30,7 +30,10 @@ export function AuthProvider({ children }) {
           email: prof.email, 
           name: prof.full_name, 
           role: prof.role, 
-          banned: prof.banned 
+          banned: prof.banned,
+          dob: prof.dob,
+          year_code: prof.year_code,
+          is_community_admin: prof.is_community_admin
         };
       }
       // Fallback if profile is missing in DB but exists in Auth

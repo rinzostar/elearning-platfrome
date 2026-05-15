@@ -76,6 +76,23 @@ function createWindow() {
   });
 }
 
+process.on('uncaughtException', (err) => {
+  const msg = err.message || '';
+  if (msg.includes('clipboard') || msg.includes('image input') || msg.includes('does not support')) {
+    return;
+  }
+  console.error('[Startup] Uncaught exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason?.message || reason || '';
+  if (msg.includes('clipboard') || msg.includes('image input') || msg.includes('does not support')) {
+    return;
+  }
+  console.error('[Startup] Unhandled rejection:', reason);
+});
+
 app.whenReady().then(() => {
   protocol.handle('app', (request) => {
     const url = new URL(request.url);

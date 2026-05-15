@@ -3,7 +3,7 @@ import { adminClient } from '../../lib/supabase';
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
   try {
-    const { email, full_name, role, dob } = req.body || {};
+    const { email, full_name, role, dob, year_code } = req.body || {};
     if (!email || !full_name || !role || !dob) return res.status(400).json({ error: 'Missing fields' });
 
     const suffix = role === 'professor' ? 'prof' : (role === 'admin' ? 'admin' : 'std');
@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     if (cErr) return res.status(400).json({ error: cErr.message });
 
     const { error: pErr } = await sb.from('profiles').insert({
-      id: created.user.id, email, full_name, role, banned: false,
+      id: created.user.id, email, full_name, role, banned: false, dob, year_code
     });
     if (pErr) return res.status(400).json({ error: pErr.message });
 

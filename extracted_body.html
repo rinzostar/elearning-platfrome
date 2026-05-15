@@ -1,0 +1,279 @@
+
+    <!-- Notification Bar -->
+    <div class="notification-bar" id="notification-bar">
+        <div class="notification-content">
+            <div class="notification-title" id="notification-title">New Update</div>
+            <div class="notification-message" id="notification-message">You have new content available</div>
+        </div>
+        <button class="notification-close" onclick="closeNotification()">&times;</button>
+    </div>
+
+    <!-- Main App Container -->
+    <div class="app-container">
+        <!-- App Header -->
+        <header class="app-header">
+            <div class="logo-section">
+                <div class="app-icon">
+                    <i class="fas fa-graduation-cap"></i>
+                </div>
+                <div class="app-title">University Platform</div>
+            </div>
+
+            <div class="header-controls">
+                   <div class="dark-mode-toggle" style="margin-right: 15px; cursor: pointer;" onclick="toggleDarkMode()">
+           <i class="fas fa-moon" id="dark-mode-icon" style="font-size: 1.2rem; color: #94a3b8;"></i>
+    </div>
+    <div class="user-profile" id="user-profile">
+                <div class="user-profile" id="user-profile">
+                    <div class="user-avatar">AD</div>
+                    <div>
+                        <div style="font-weight: 600;">Admin User</div>
+                        <div style="font-size: 0.85rem; opacity: 0.9;">Administrator</div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- ========== HOME INTERFACE ========== -->
+        <div class="main-content">
+            <div id="home-page" class="content-area active">
+                <style>
+                    /* HOME PAGE SPECIFIC STYLES */
+                    .home-grid {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+                        gap: 25px;
+                    }
+
+                    .section-container {
+                        background: white;
+                        border-radius: 16px;
+                        padding: 22px;
+                        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+                        border: 1px solid #e2e8f0;
+                    }
+
+                    .section-header {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        margin-bottom: 18px;
+                    }
+
+                    .section-label {
+                        font-size: 1.1rem;
+                        font-weight: 600;
+                        color: #1e293b;
+                        display: flex;
+                        align-items: center;
+                        gap: 10px;
+                    }
+
+                    .section-label i {
+                        color: #667eea;
+                    }
+
+                    .view-all {
+                        color: #64748b;
+                        font-size: 0.85rem;
+                        cursor: pointer;
+                        transition: color 0.2s;
+                    }
+
+                    .view-all:hover {
+                        color: #1e3c72;
+                    }
+
+                    /* Academic Level Card */
+                    .academic-level-card {
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        border-radius: 16px;
+                        padding: 25px;
+                        margin-bottom: 20px;
+                    }
+
+                    .academic-level-title {
+                        font-size: 1.2rem;
+                        font-weight: 600;
+                        margin-bottom: 10px;
+                        display: flex;
+                        align-items: center;
+                        gap: 10px;
+                    }
+
+                    .academic-level-path {
+                        font-size: 0.9rem;
+                        opacity: 0.9;
+                        margin-bottom: 15px;
+                    }
+
+                    .academic-level-actions {
+                        display: flex;
+                        gap: 10px;
+                        margin-top: 15px;
+                    }
+
+                    /* Favorite Items */
+                    .favorite-item {
+                        display: flex;
+                        align-items: center;
+                        padding: 16px;
+                        border-radius: 12px;
+                        background: #f8fafc;
+                        margin-bottom: 10px;
+                        border: 1px solid #e2e8f0;
+                        transition: all 0.2s ease;
+                        cursor: pointer;
+                        position: relative;
+                    }
+
+                    .favorite-item:hover {
+                        transform: translateX(5px);
+                        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+                        border-color: #cbd5e1;
+                    }
+
+                    .favorite-icon {
+                        width: 45px;
+                        height: 45px;
+                        border-radius: 10px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin-right: 15px;
+                        font-size: 1.2rem;
+                        color: white;
+                    }
+
+                    .favorite-icon.math { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+                    .favorite-icon.physics { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+                    .favorite-icon.chemistry { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+                    .favorite-icon.community { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
+
+                    .favorite-details {
+                        flex: 1;
+                    }
+
+                    .favorite-title {
+                        font-weight: 600;
+                        margin-bottom: 4px;
+                        color: #1e293b;
+                    }
+
+                    .favorite-subtitle {
+                        font-size: 0.85rem;
+                        color: #64748b;
+                    }
+
+                    .favorite-meta {
+                        font-size: 0.8rem;
+                        color: #94a3b8;
+                    }
+
+                    /* Recent Items */
+                    .recent-item {
+                        display: flex;
+                        align-items: center;
+                        padding: 14px;
+                        border-radius: 10px;
+                        background: #f8fafc;
+                        margin-bottom: 8px;
+                        border: 1px solid #e2e8f0;
+                        transition: all 0.2s ease;
+                        cursor: pointer;
+                    }
+
+                    .recent-item:hover {
+                        background: #e2e8f0;
+                    }
+
+                    .recent-icon {
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 8px;
+                        background: #e2e8f0;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin-right: 12px;
+                        color: #64748b;
+                    }
+
+                    .recent-details {
+                        flex: 1;
+                    }
+
+                    .recent-title {
+                        font-weight: 500;
+                        margin-bottom: 2px;
+                        color: #1e293b;
+                        font-size: 0.95rem;
+                    }
+
+                    .recent-time {
+                        font-size: 0.8rem;
+                        color: #94a3b8;
+                    }
+                </style>
+                
+                <div class="page-header">
+                    <h1 class="page-title">
+                        <div class="page-title-icon">
+                            <i class="fas fa-home"></i>
+                        </div>
+                        Home
+                    </h1>
+                </div>
+
+             <!-- Academic Level -->
+<div class="academic-level-card" id="academic-level-display">
+    <div class="academic-level-title">
+        <i class="fas fa-user-graduate"></i>
+        Your Academic Level
+    </div>
+    <div class="academic-level-path" id="academic-level-path">
+        Not set yet
+    </div>
+    <div class="academic-level-actions">
+        <button class="btn-primary" onclick="goToAcademicLevel()">
+            <i class="fas fa-rocket"></i>
+            Quick Access to Year
+        </button>
+        <button class="btn-secondary" onclick="editAcademicLevel()">
+            <i class="fas fa-edit"></i>
+            Edit Level
+        </button>
+    </div>
+    <div style="margin-top: 15px; font-size: 0.85rem; color: rgba(255,255,255,0.8);">
+        <i class="fas fa-info-circle"></i>
+        Quick access takes you directly to your Year page
+    </div>
+</div>
+                <!-- Favorite Courses -->
+                <div class="section-container">
+                    <div class="section-header">
+                        <div class="section-label">
+                            <i class="fas fa-star"></i>
+                            Favorite Courses
+                        </div>
+                    </div>
+                    <div id="favorite-courses-list">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Favorite Community Posts -->
+                <div class="section-container">
+                    <div class="section-header">
+                        <div class="section-label">
+                            <i class="fas fa-heart"></i>
+                            Favorite Community Posts
+                        </div>
+                    </div>
+                    <div id="favorite-community-list">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                

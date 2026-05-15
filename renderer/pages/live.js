@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '../lib/auth';
 import { supabase, HAS_SUPABASE } from '../lib/supabase';
-import { listChat, sendChat, endLivestream, getActiveLivestreamForModule, getModule } from '../lib/db';
+import { listChat, sendChat, endLivestream, getActiveLivestreamForModule, getModule, notifyYear } from '../lib/db';
 import { toast } from '../lib/toast';
 import Avatar from '../components/Avatar';
 
@@ -99,16 +99,7 @@ export default function Live() {
 
   useEffect(() => {
     if (!HAS_SUPABASE || !queryModule) return;
-    const ch = supabase
-      .channel(`module-live-${queryModule}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'livestreams',
-        filter: `module_id=eq.${queryModule}`,
-      }, () => refreshLiveState())
-      .subscribe();
-    return () => supabase.removeChannel(ch);
+    // Skip - realtime causing ws bundling issue
   }, [queryModule, refreshLiveState]);
 
   useEffect(() => {
@@ -164,18 +155,7 @@ export default function Live() {
     listChat(lsid).then(({ data }) => {
       setMessages((data || []).map(m => ({ ...m, sender_name: m.profiles?.full_name || 'User' })));
     });
-    const ch = supabase
-      .channel(`chat-${lsid}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'chat_messages',
-        filter: `livestream_id=eq.${lsid}`,
-      }, async (payload) => {
-        const m = payload.new;
-        const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', m.sender_id).single();
-        setMessages(prev => [...prev, { ...m, sender_name: prof?.full_name || 'User' }]);
-      })
-      .subscribe();
-    return () => supabase.removeChannel(ch);
+    // Skip - realtime causing ws bundling issue
   }, [livestream?.id]);
 
   useEffect(() => {
@@ -222,6 +202,7 @@ export default function Live() {
         setErrorMsg('');
 
         const { Room, RoomEvent, Track, ConnectionState } = await import('livekit-client');
+        const ws = (await import('ws')).default;
         console.log('[LIVE] LiveKit imported');
 
         const tokenRes = await fetch('/api/livekit-token', {
@@ -237,6 +218,7 @@ export default function Live() {
         room = new Room({
           adaptiveStream: true,
           dynacast: true,
+          transport: ws,
           publishDefaults: { simulcast: true, videoSimulcastLayers: undefined },
           videoCaptureDefaults: isHost ? { deviceId: camId || undefined, resolution: { width: 1280, height: 720 } } : undefined,
           audioCaptureDefaults: isHost ? { deviceId: micId || undefined, echoCancellation: true, noiseSuppression: true } : undefined,
@@ -320,8 +302,8 @@ const updateCount = () => {
               console.log('[LIVE] Poll - participant:', p.identity);
               console.log('[LIVE] Poll - video pubs:', p.videoTrackPublications.size);
               
-              // Try subscribing to all tracks
-              p.subscribeToTracks().catch(() => {});
+              // Try subscribing - use correct API
+              if (p.subscribe) { p.subscribe().catch(() => {}); }
               
               for (const pub of p.videoTrackPublications.values()) {
                 console.log('[LIVE] Poll - video pub:', pub.trackName, 'subscribed:', pub.isSubscribed, 'track:', pub.track?.sid);
@@ -420,6 +402,18 @@ const updateCount = () => {
 
       setLivestream(data.livestream);
       setIsLive(true);
+
+      // Notify students
+      if (moduleInfo?.year_code) {
+        await notifyYear(moduleInfo.year_code, {
+          user_id: null, // Broadcast
+          title: 'Live Session Started',
+          message: `${user.name} is now live for "${moduleInfo.name}"`,
+          type: 'live_stream',
+          link: `/live?module=${queryModule}`
+        });
+      }
+
       toast.success('Module is live');
     } catch (e) {
       setStatus('idle');

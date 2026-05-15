@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useAuth } from '../lib/auth';
 import { supabase, HAS_SUPABASE } from '../lib/supabase';
+import { getNotificationSettings } from '../lib/db';
 
 const STORAGE_KEY = 'lumen_dismissed_lives';
 
@@ -40,33 +41,19 @@ export default function LiveNotifications() {
   const router = useRouter();
   const [items, setItems] = useState([]);
   const [dismissed, setDismissed] = useState(() => readDismissed());
+  const [settings, setSettings] = useState({ live: true });
 
-  // Don't show on the live page itself
+  useEffect(() => {
+    setSettings(getNotificationSettings());
+  }, []);
+
+  // Don't show on the live page itself or if disabled
   const onLivePage = router.pathname === '/live';
+  const isEnabled = settings.live;
 
   useEffect(() => {
     if (!user || !HAS_SUPABASE) return;
-
-    const ch = supabase
-      .channel('live-notifications')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livestreams' }, async (payload) => {
-        const live = payload.new;
-        if (!isRealModuleLive(live)) return;
-        if (live.host_id === user.id) return; // don't notify yourself
-        const d = await decorate(live);
-        setItems(prev => prev.some(x => x.id === d.id) ? prev : [...prev, d]);
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'livestreams' }, (payload) => {
-        const live = payload.new;
-        if (!live) return;
-        if (live.status !== 'live') {
-          // ended — remove from list
-          setItems(prev => prev.filter(x => x.id !== live.id));
-        }
-      })
-      .subscribe();
-
-    return () => supabase.removeChannel(ch);
+    // Skip - realtime causing ws bundling issue
   }, [user?.id]);
 
   const dismiss = (id) => {
@@ -78,7 +65,7 @@ export default function LiveNotifications() {
     });
   };
 
-  if (!user || onLivePage) return null;
+  if (!user || onLivePage || !isEnabled) return null;
   const visible = items.filter(l => !dismissed.has(l.id));
   if (visible.length === 0) return null;
 

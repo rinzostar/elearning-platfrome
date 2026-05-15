@@ -8,7 +8,7 @@
     "dev:web": "next dev renderer",
     "build": "next build renderer",
     "build:renderer": "next build renderer",
-    "dist:win": "npm run build:renderer && electron-builder --win",
+    "dist:win": "npm run build:renderer && electron-builder --win --dir",
     "start": "next start renderer",
     "electron": "NODE_ENV=development electron .",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -24,22 +24,6 @@
     "directories": {
       "output": "dist"
     },
-    "win": {
-      "target": [
-        {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
     "asar": true
   },
   "keywords": [],
@@ -49,12 +33,15 @@
     "@livekit/components-react": "^2.9.21",
     "@supabase/supabase-js": "^2.49.4",
     "livekit-client": "^2.10.1",
-    "livekit-server-sdk": "^2.13.0"
+    "livekit-server-sdk": "^2.13.0",
+    "ws": "^8.20.1"
   },
   "devDependencies": {
+    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/maker-zip": "^7.11.1",
     "concurrently": "^9.2.1",
     "electron": "^33.3.1",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^22.14.13",
     "next": "^16.2.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

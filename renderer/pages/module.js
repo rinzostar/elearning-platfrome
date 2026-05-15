@@ -10,7 +10,7 @@ import {
 } from '../lib/db';
 import { publicUrl, uploadFile } from '../lib/storage';
 import { toast } from '../lib/toast';
-import { chatWithCourse, generateCourseDraft } from '../lib/aiClient';
+import { chatWithCourse, generateCourseDraft, cleanAiError } from '../lib/aiClient';
 
 function ytEmbed(url) {
   if (!url) return null;
@@ -22,17 +22,44 @@ function firstYoutubeLink(text) {
   return text?.match(/https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)[\w-]{11}[^\s]*/)?.[0] || null;
 }
 
+function getFileType(fileName = '') {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const types = {
+    pdf: { icon: '📕', label: 'PDF', color: '#e74c3c' },
+    doc: { icon: '📘', label: 'Word', color: '#2b579a' },
+    docx: { icon: '📘', label: 'Word', color: '#2b579a' },
+    xls: { icon: '📊', label: 'Excel', color: '#217346' },
+    xlsx: { icon: '📊', label: 'Excel', color: '#217346' },
+    ppt: { icon: '📙', label: 'PowerPoint', color: '#d24726' },
+    pptx: { icon: '📙', label: 'PowerPoint', color: '#d24726' },
+    png: { icon: '🖼️', label: 'Image', color: '#8e44ad' },
+    jpg: { icon: '🖼️', label: 'Image', color: '#8e44ad' },
+    jpeg: { icon: '🖼️', label: 'Image', color: '#8e44ad' },
+    gif: { icon: '🎞️', label: 'Image', color: '#8e44ad' },
+    webp: { icon: '🖼️', label: 'Image', color: '#8e44ad' },
+    mp4: { icon: '🎬', label: 'Video', color: '#e67e22' },
+    mp3: { icon: '🎵', label: 'Audio', color: '#f39c12' },
+    zip: { icon: '📦', label: 'Archive', color: '#7f8c8d' },
+    rar: { icon: '📦', label: 'Archive', color: '#7f8c8d' },
+  };
+  return types[ext] || { icon: '📄', label: 'File', color: '#34495e' };
+}
+
 function canPreviewFile(fileName = '', path = '') {
   const value = `${fileName} ${path}`.toLowerCase();
   return /\.(png|jpe?g|gif|webp|pdf)$/i.test(value);
 }
 
-function AttachmentPreview({ attachment }) {
+function AttachmentPreview({ attachment, onDelete }) {
   const url = publicUrl('course-files', attachment.file_path);
   const name = attachment.file_name || '';
-  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(name || url);
-  const isPdf = /\.pdf$/i.test(name || url);
-  if (!canPreviewFile(name, url)) return null;
+  const fileType = getFileType(name);
+  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(name);
+  const isPdf = /\.pdf$/i.test(name);
+  const canPreview = canPreviewFile(name, url);
+  
+  if (!canPreview) return null;
+  
   return (
     <div className="embed-box">
       {isImage ? (
@@ -41,6 +68,24 @@ function AttachmentPreview({ attachment }) {
         <iframe src={url} title={name} />
       ) : null}
     </div>
+  );
+}
+
+function FileIcon({ fileName }) {
+  const type = getFileType(fileName);
+  return (
+    <span 
+      className="file-type-icon" 
+      style={{ 
+        display: 'inline-flex', 
+        alignItems: 'center', 
+        gap: 4,
+        fontSize: 13,
+      }}
+      title={`${type.label} file`}
+    >
+      <span style={{ fontSize: 16 }}>{type.icon}</span>
+    </span>
   );
 }
 
@@ -269,8 +314,10 @@ export default function Module() {
 
       setChatMessages(prev => [...prev, { role: 'assistant', text: answer }]);
     } catch (err) {
-      setChatError(err.message);
-      toast.error('AI request failed');
+      const msg = cleanAiError(err.message);
+      setChatError(msg);
+      if (/clipboard|image input|does not support/i.test(err.message)) toast.info(msg);
+      else toast.error('AI request failed');
     }
     setChatBusy(false);
   };
@@ -506,9 +553,20 @@ export default function Module() {
 
                 {attach.length > 0 && (
                   <div style={{ marginTop: 24 }}>
-                    <h3 style={{ marginBottom: 12 }}>Attachments</h3>
+                    <h3 style={{ marginBottom: 12 }}>Attachments ({attach.length})</h3>
                     <div className="inline-files">
-                      {attach.map(a => <AttachmentPreview key={a.id} attachment={a} />)}
+                      {attach.map(a => canPreviewFile(a.file_name) ? (
+                        <AttachmentPreview key={a.id} attachment={a} />
+                      ) : (
+                        <div key={a.id} className="file-card">
+                          <div className="file-icon" style={{ fontSize: 28 }}>{getFileType(a.file_name).icon}</div>
+                          <div className="file-info">
+                            <div className="name">{a.file_name}</div>
+                            <div className="type-label" style={{ color: getFileType(a.file_name).color }}>{getFileType(a.file_name).label}</div>
+                          </div>
+                          <a href={publicUrl('course-files', a.file_path)} target="_blank" rel="noreferrer" className="btn sm">Download</a>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -593,16 +651,38 @@ export default function Module() {
               <h3 style={{ marginBottom: 8, fontSize: 14 }}>Resources</h3>
               {attach.length === 0 ? (
                 <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>No files attached.</div>
-              ) : attach.map(a => (
-                <div key={a.id} className="attach" style={{ background: 'transparent', padding: '8px 10px' }}>
-                  <div className="name" style={{ fontSize: 12 }}>{a.file_name}</div>
-                  <a href={publicUrl('course-files', a.file_path)} target="_blank" rel="noreferrer" className="btn ghost xs">↓</a>
+              ) : (
+                <div className="attach-list">
+                  {attach.map(a => {
+                    const type = getFileType(a.file_name);
+                    return (
+                      <div key={a.id} className="attach-item">
+                        <FileIcon fileName={a.file_name} />
+                        <div className="attach-info">
+                          <div className="name" style={{ fontSize: 12 }}>{a.file_name}</div>
+                          <div className="type-label" style={{ fontSize: 10, color: type.color }}>{type.label}</div>
+                        </div>
+                        <div className="attach-actions">
+                          <a href={publicUrl('course-files', a.file_path)} target="_blank" rel="noreferrer" className="btn ghost xs" title="Download">↓</a>
+                          {canManage && (
+                            <button className="btn ghost xs" onClick={() => onRemoveAttach(a.id)} title="Remove" style={{ color: 'var(--danger)' }}>×</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              )}
               {canManage && (
-                <label className="btn ghost sm" style={{ width: '100%', marginTop: 10, cursor: 'pointer' }}>
-                  Upload File
-                  <input type="file" hidden onChange={e => onFileUpload(e, openCourse.id)} />
+                <label className="btn ghost sm" style={{ width: '100%', marginTop: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <span>📎</span> Upload File
+                  <input 
+                    type="file" 
+                    hidden 
+                    multiple
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mp3,.zip"
+                    onChange={e => onFileUpload(e, openCourse.id)} 
+                  />
                 </label>
               )}
             </div>

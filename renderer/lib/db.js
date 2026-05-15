@@ -39,11 +39,13 @@ const mock = {
   ],
   reports: [],
   livestreams: [],
+  teaching_requests: [],
+  notifications: [],
   users: [
-    { id: 'u1', full_name: 'Aïcha Benali', email: 'a.benali@school.edu', role: 'professor', banned: false },
-    { id: 'u2', full_name: 'Yacine Meziane', email: 'y.meziane@school.edu', role: 'student', banned: false },
-    { id: 'u3', full_name: 'Inès Belkacem', email: 'i.belkacem@school.edu', role: 'student', banned: false },
-    { id: 'u4', full_name: 'Mohamed Chérif', email: 'm.cherif@school.edu', role: 'professor', banned: false },
+    { id: 'u1', full_name: 'Aïcha Benali', email: 'a.benali@school.edu', role: 'professor', banned: false, dob: '01/01/1980' },
+    { id: 'u2', full_name: 'Yacine Meziane', email: 'y.meziane@school.edu', role: 'student', banned: false, dob: '01/01/2005', year_code: 'L1' },
+    { id: 'u3', full_name: 'Inès Belkacem', email: 'i.belkacem@school.edu', role: 'student', banned: false, dob: '01/01/2005', year_code: 'L1' },
+    { id: 'u4', full_name: 'Mohamed Chérif', email: 'm.cherif@school.edu', role: 'professor', banned: false, dob: '01/01/1975' },
   ],
 };
 
@@ -54,11 +56,11 @@ const LIVE_TTL_HOURS = 8;
 const liveCutoff = () => new Date(Date.now() - LIVE_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
 // Helper to prevent indefinite hangs
-const DB_TIMEOUT = 10000; // 10s
-async function withTimeout(promise, context = 'Database') {
+const DB_TIMEOUT = 30000; // 30s
+async function withTimeout(promise, context = 'Database', ms = DB_TIMEOUT) {
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(`${context} request timed out`)), DB_TIMEOUT);
+    timeoutId = setTimeout(() => reject(new Error(`${context} request timed out`)), ms);
   });
   try {
     const res = await Promise.race([promise, timeoutPromise]);
@@ -103,18 +105,18 @@ export async function getModule(id) {
     const m = mock.modules.find(x => x.id === Number(id));
     if (!m) return ok(null);
     const sem = mock.semesters.find(s => s.id === m.semester_id);
-    return ok({ ...m, semester_label: sem?.label });
+    return ok({ ...m, semester_label: sem?.label, year_code: sem?.year_code });
   }
   try {
     const { data, error } = await withTimeout(
       supabase
         .from('modules')
-        .select('*, profiles:owner_id(full_name), semesters(label)')
+        .select('*, profiles:owner_id(full_name), semesters(label, year_code)')
         .eq('id', id).single(),
       'getModule'
     );
     if (error) return { data: null, error };
-    return ok({ ...data, owner_name: data.profiles?.full_name, semester_label: data.semesters?.label });
+    return ok({ ...data, owner_name: data.profiles?.full_name, semester_label: data.semesters?.label, year_code: data.semesters?.year_code });
   } catch (e) { return { data: null, error: e }; }
 }
 
@@ -166,23 +168,7 @@ export async function endLivestream(id) {
   } catch (e) { return { data: null, error: e }; }
 }
 
-export async function deletePost(id) {
-  if (!HAS_SUPABASE) {
-    const i = mock.posts.findIndex(p => p.id === Number(id));
-    if (i >= 0) mock.posts.splice(i, 1);
-    mock.reports = mock.reports.filter(r => r.post_id !== Number(id));
-    return ok(true);
-  }
-  try {
-    if (electronAPI()?.deletePost) {
-      const res = await withTimeout(electronAPI().deletePost({ id }), 'deletePost:ipc');
-      if (res?.error) return { data: null, error: new Error(res.error) };
-      return ok(true);
-    }
-    await supabase.from('reports').delete().eq('post_id', id);
-    return await withTimeout(supabase.from('posts').delete().eq('id', id), 'deletePost:supabase');
-  } catch (e) { return { data: null, error: e }; }
-}
+// Replaced by unified version at end of file
 
 export async function dismissReports(postId) {
   if (!HAS_SUPABASE) {
@@ -210,11 +196,22 @@ export async function listMyModules(profId) {
       })));
   }
   try {
+    // Check modules where prof is owner OR in module_teachers
+    const { data: owned } = await supabase.from('modules').select('id').eq('owner_id', profId);
+    const { data: teaching } = await supabase.from('module_teachers').select('module_id').eq('professor_id', profId);
+    
+    const ids = Array.from(new Set([
+      ...(owned || []).map(o => o.id),
+      ...(teaching || []).map(t => t.module_id)
+    ]));
+
+    if (!ids.length) return ok([]);
+
     const { data, error } = await withTimeout(
       supabase
         .from('modules')
         .select('*, semesters(label), courses(count)')
-        .eq('owner_id', profId),
+        .in('id', ids),
       'listMyModules'
     );
     if (error) return { data: null, error };
@@ -345,79 +342,7 @@ export async function toggleFavorite(userId, courseId) {
   } catch (e) { return { data: null, error: e }; }
 }
 
-export async function listPosts() {
-  if (!HAS_SUPABASE) {
-    return ok([...mock.posts].sort((a, b) => b.created_at.localeCompare(a.created_at)));
-  }
-  try {
-    return await withTimeout(
-      supabase
-        .from('posts')
-        .select('*, profiles:author_id(full_name)')
-        .order('created_at', { ascending: false }),
-      'listPosts'
-    );
-  } catch (e) { return { data: null, error: e }; }
-}
-
-export async function createPost({ author_id, content, link = null, file_path = null }) {
-  if (!HAS_SUPABASE) {
-    const u = mock.users.find(u => u.id === author_id) || { full_name: 'You' };
-    mock.posts.unshift({ id: nextId(mock.posts), author_id, author_name: u.full_name, content, link, file_path, created_at: new Date().toISOString() });
-    return ok(true);
-  }
-  try {
-    if (electronAPI()?.createPost) {
-      const res = await withTimeout(electronAPI().createPost({ author_id, content, link, file_path }), 'createPost:ipc');
-      if (res?.error) return { data: null, error: new Error(res.error) };
-      return ok(res?.post || true);
-    }
-    return await withTimeout(supabase.from('posts').insert({ author_id, content, link, file_path }), 'createPost:supabase');
-  } catch (e) { return { data: null, error: e }; }
-}
-
-export async function reportPost(postId, reporterId) {
-  if (!HAS_SUPABASE) {
-    mock.reports.push({ id: nextId(mock.reports), post_id: postId, reporter_id: reporterId });
-    return ok(true);
-  }
-  try {
-    if (electronAPI()?.reportPost) {
-      const res = await withTimeout(electronAPI().reportPost({ post_id: postId, reporter_id: reporterId }), 'reportPost:ipc');
-      if (res?.error) return { data: null, error: new Error(res.error) };
-      return ok(true);
-    }
-    return await withTimeout(supabase.from('reports').insert({ post_id: postId, reporter_id: reporterId }), 'reportPost:supabase');
-  } catch (e) { return { data: null, error: e }; }
-}
-
-export async function listReports() {
-  if (!HAS_SUPABASE) {
-    const grouped = {};
-    mock.reports.forEach(r => { grouped[r.post_id] = (grouped[r.post_id] || 0) + 1; });
-    return ok(Object.entries(grouped).map(([pid, count]) => {
-      const p = mock.posts.find(x => x.id === Number(pid));
-      return p ? { ...p, count } : null;
-    }).filter(Boolean));
-  }
-  try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from('reports')
-        .select('post_id, posts(*, profiles:author_id(full_name))'),
-      'listReports'
-    );
-    if (error) return { data: null, error };
-    const grouped = {};
-    (data || []).forEach(r => {
-      if (!r.posts) return;
-      const k = r.post_id;
-      if (!grouped[k]) grouped[k] = { ...r.posts, count: 0, author_name: r.posts.profiles?.full_name };
-      grouped[k].count += 1;
-    });
-    return ok(Object.values(grouped));
-  } catch (e) { return { data: null, error: e }; }
-}
+// Functions consolidated or moved to end of file
 
 export async function listUsers() {
   if (!HAS_SUPABASE) return ok(mock.users);
@@ -556,6 +481,302 @@ export async function sendChat(livestreamId, senderId, message) {
   if (!HAS_SUPABASE) return ok(true);
   try {
     return await withTimeout(supabase.from('chat_messages').insert({ livestream_id: livestreamId, sender_id: senderId, message }), 'sendChat');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+// ---------- Notifications ----------
+const NOTIF_PREFS_KEY = 'lumen_notif_prefs';
+
+function getNotifPrefs() {
+  if (typeof window === 'undefined') return { live: true, courses: true };
+  try {
+    return JSON.parse(localStorage.getItem(NOTIF_PREFS_KEY) || '{"live":true,"courses":true}');
+  } catch { return { live: true, courses: true }; }
+}
+
+function setNotifPrefs(prefs) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(NOTIF_PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+}
+
+export function getNotificationSettings() {
+  return getNotifPrefs();
+}
+
+export function setNotificationSettings(prefs) {
+  setNotifPrefs(prefs);
+}
+
+export async function listRecentCourses(limit = 10) {
+  if (!HAS_SUPABASE) {
+    return ok(mock.courses.slice(0, limit).map(c => ({
+      ...c,
+      module_name: mock.modules.find(m => m.id === c.module_id)?.name || 'Module',
+      professor_name: mock.modules.find(m => m.id === c.module_id)?.owner_name || 'Professor',
+    })));
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('courses')
+        .select('*, modules(name), profiles:modules(owner_id(full_name))')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      'listRecentCourses'
+    );
+    if (error) return { data: null, error };
+    return ok((data || []).map(c => ({
+      id: c.id,
+      type: 'course',
+      title: c.title,
+      module_id: c.module_id,
+      module_name: c.modules?.name,
+      professor_name: c.profiles?.full_name,
+      created_at: c.created_at,
+    })));
+  } catch (e) { return { data: null, error: e }; }
+}
+
+// Teaching requests
+export async function createTeachingRequest(professorId, moduleId) {
+  if (!HAS_SUPABASE) {
+    mock.teaching_requests.push({ id: nextId(mock.teaching_requests), professor_id: professorId, module_id: moduleId, status: 'pending', created_at: new Date().toISOString() });
+    return ok(true);
+  }
+  try {
+    return await withTimeout(supabase.from('teaching_requests').insert({ professor_id: professorId, module_id: moduleId }), 'createTeachingRequest');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function listTeachingRequests() {
+  if (!HAS_SUPABASE) {
+    return ok(mock.teaching_requests.map(r => ({
+      ...r,
+      professor_name: mock.users.find(u => u.id === r.professor_id)?.full_name,
+      module_name: mock.modules.find(m => m.id === r.module_id)?.name,
+    })));
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('teaching_requests')
+        .select('*, profiles:professor_id(full_name), modules(name)')
+        .order('created_at', { ascending: false }),
+      'listTeachingRequests'
+    );
+    if (error) return { data: null, error };
+    return ok(data.map(r => ({
+      ...r,
+      professor_name: r.profiles?.full_name,
+      module_name: r.modules?.name,
+    })));
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function updateTeachingRequestStatus(requestId, status) {
+  if (!HAS_SUPABASE) {
+    const r = mock.teaching_requests.find(x => x.id === requestId);
+    if (r) {
+      r.status = status;
+      if (status === 'approved') {
+        const m = mock.modules.find(x => x.id === r.module_id);
+        if (m) m.owner_id = r.professor_id;
+      }
+    }
+    return ok(true);
+  }
+  try {
+    const { data: req } = await supabase.from('teaching_requests').select('*').eq('id', requestId).single();
+    if (status === 'approved' && req) {
+      await supabase.from('module_teachers').insert({ module_id: req.module_id, professor_id: req.professor_id });
+      const { data: mod } = await supabase.from('modules').select('owner_id').eq('id', req.module_id).single();
+      if (!mod?.owner_id) {
+        await supabase.from('modules').update({ owner_id: req.professor_id }).eq('id', req.module_id);
+      }
+    }
+    return await withTimeout(supabase.from('teaching_requests').update({ status }).eq('id', requestId), 'updateTeachingRequestStatus');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+// Notifications
+export async function addNotification({ user_id, title, message, type, link }) {
+  if (!HAS_SUPABASE) {
+    mock.notifications.unshift({ id: nextId(mock.notifications), user_id, title, message, type, link, is_read: false, created_at: new Date().toISOString() });
+    return ok(true);
+  }
+  try {
+    return await withTimeout(supabase.from('notifications').insert({ user_id, title, message, type, link }), 'addNotification');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function listNotifications(userId) {
+  if (!HAS_SUPABASE) {
+    return ok(mock.notifications.filter(n => n.user_id === userId));
+  }
+  try {
+    return await withTimeout(
+      supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+      'listNotifications'
+    );
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function markNotificationRead(id) {
+  if (!HAS_SUPABASE) {
+    const n = mock.notifications.find(x => x.id === id);
+    if (n) n.is_read = true;
+    return ok(true);
+  }
+  try {
+    return await withTimeout(supabase.from('notifications').update({ is_read: true }).eq('id', id), 'markNotificationRead');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function listPostsByYear(yearCode) {
+  if (!HAS_SUPABASE) {
+    return ok(mock.posts.filter(p => !yearCode || p.year_code === yearCode || !p.year_code));
+  }
+  try {
+    let q = supabase.from('posts').select('*, profiles:author_id(full_name)');
+    if (yearCode) q = q.eq('year_code', yearCode);
+    const result = await withTimeout(q.order('created_at', { ascending: false }), 'listPostsByYear');
+    if (result.error) {
+      console.error('[listPostsByYear] Supabase Error:', result.error);
+    }
+    return result;
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function createPost({ author_id, content, year_code, file_path = null }) {
+  console.log('[createPost] Starting...', { author_id, year_code });
+  
+  if (!HAS_SUPABASE) {
+    mock.posts.unshift({ id: nextId(mock.posts), author_id, content, year_code, file_path, created_at: new Date().toISOString() });
+    return ok(true);
+  }
+  
+  try {
+    // Quick ping to see if Supabase is reachable
+    const { error: pingErr } = await supabase.from('profiles').select('id').limit(1);
+    if (pingErr) console.warn('[createPost] Supabase ping warning:', pingErr.message);
+
+    console.log('[createPost] Executing insert...');
+    // REMOVED TIMEOUT to see if it ever finishes or what error it gives
+    const { data, error } = await supabase
+      .from('posts')
+      .insert({ author_id, content, year_code, file_path })
+      .select();
+    
+    if (error) {
+      console.error('[createPost] Supabase Error:', error);
+      return { data: null, error };
+    }
+    
+    console.log('[createPost] Success:', data);
+    return ok(data);
+  } catch (e) { 
+    console.error('[createPost] Exception:', e);
+    return { data: null, error: e }; 
+  }
+}
+
+export async function deletePost(id) {
+  if (!HAS_SUPABASE) {
+    const idx = mock.posts.findIndex(p => p.id === id);
+    if (idx !== -1) mock.posts.splice(idx, 1);
+    return ok(true);
+  }
+  try {
+    return await withTimeout(supabase.from('posts').delete().eq('id', id), 'deletePost');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function reportPost(postId, reporterId) {
+  if (!HAS_SUPABASE) {
+    mock.reports.push({ id: nextId(mock.reports), post_id: postId, reporter_id: reporterId });
+    return ok(true);
+  }
+  try {
+    return await withTimeout(supabase.from('reports').insert({ post_id: postId, reporter_id: reporterId }), 'reportPost');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function listReports() {
+  if (!HAS_SUPABASE) {
+    const grouped = {};
+    mock.reports.forEach(r => { grouped[r.post_id] = (grouped[r.post_id] || 0) + 1; });
+    return ok(Object.entries(grouped).map(([pid, count]) => {
+      const p = mock.posts.find(x => x.id === Number(pid));
+      return p ? { ...p, count } : null;
+    }).filter(Boolean));
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('reports')
+        .select('post_id, posts(*, profiles:author_id(full_name))'),
+      'listReports'
+    );
+    if (error) return { data: null, error };
+    const grouped = {};
+    (data || []).forEach(r => {
+      if (!r.posts) return;
+      const k = r.post_id;
+      if (!grouped[k]) grouped[k] = { ...r.posts, count: 0, author_name: r.posts.profiles?.full_name };
+      grouped[k].count += 1;
+    });
+    return ok(Object.values(grouped));
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function setCommunityAdmin(userId, is_community_admin) {
+  if (!HAS_SUPABASE) {
+    const u = mock.users.find(x => x.id === userId);
+    if (u) u.is_community_admin = is_community_admin;
+    return ok(true);
+  }
+  try {
+    return await withTimeout(supabase.from('profiles').update({ is_community_admin }).eq('id', userId), 'setCommunityAdmin');
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function listModulesWithRequests(profId) {
+  if (!HAS_SUPABASE) {
+    return ok(mock.modules.map(m => ({
+      ...m,
+      request_status: mock.teaching_requests.find(r => r.module_id === m.id && r.professor_id === profId)?.status
+    })));
+  }
+  try {
+    const { data: mods } = await supabase.from('modules').select('*, semesters(label)');
+    const { data: reqs } = await supabase.from('teaching_requests').select('*').eq('professor_id', profId);
+    return ok(mods.map(m => ({
+      ...m,
+      semester_label: m.semesters?.label,
+      request_status: reqs.find(r => r.module_id === m.id)?.status
+    })));
+  } catch (e) { return { data: null, error: e }; }
+}
+
+export async function notifyYear(yearCode, { title, message, type, link }) {
+  if (!HAS_SUPABASE) return ok(true);
+  try {
+    const { data: students } = await supabase.from('profiles').select('id').eq('year_code', yearCode).eq('role', 'student');
+    if (!students?.length) return ok(true);
+    
+    const notifs = students.map(s => ({
+      user_id: s.id,
+      title,
+      message,
+      type,
+      link
+    }));
+    
+    return await withTimeout(supabase.from('notifications').insert(notifs), 'notifyYear');
   } catch (e) { return { data: null, error: e }; }
 }
 
